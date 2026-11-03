@@ -5,6 +5,7 @@ import { parseFrontmatter } from './frontmatter.js';
 import { estimateTokens } from './tokens.js';
 import {
 	buildFileGraph,
+	buildResolutionContext,
 	listFilesRecursive,
 	readFileInfo,
 	type FileGraph,
@@ -91,6 +92,8 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 		if (!fs.existsSync(steeringDir)) {
 			continue;
 		}
+		// 参照の解決はフォルダ相対とフォルダ内の同名一意一致も試みる（§10.2）
+		const resCtx = buildResolutionContext([root], [root]);
 		const files: string[] = [];
 		listFilesRecursive(steeringDir, 0, files);
 		for (const filePath of files.sort()) {
@@ -121,7 +124,7 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 				inclusionRaw: rawInclusion || undefined,
 				fileMatchPattern: fm.values['fileMatchPattern']?.trim() || undefined,
 				tokens: estimateTokens(text),
-				graph: buildFileGraph(filePath, steeringDir),
+				graph: buildFileGraph(filePath, steeringDir, resCtx),
 				canonicalCounterpart,
 			});
 		}
@@ -142,6 +145,8 @@ export function discoverSpecs(workspaceRoots: string[]): SpecUnit[] {
 		if (!fs.existsSync(specsDir)) {
 			continue;
 		}
+		// 参照の解決はフォルダ相対とフォルダ内の同名一意一致も試みる（§10.2）
+		const resCtx = buildResolutionContext([root], [root]);
 		let entries: fs.Dirent[];
 		try {
 			entries = fs.readdirSync(specsDir, { withFileTypes: true });
@@ -162,7 +167,7 @@ export function discoverSpecs(workspaceRoots: string[]): SpecUnit[] {
 					present,
 					filePath,
 					tokens: present ? estimateTokens(readText(filePath)) : 0,
-					graph: present ? buildFileGraph(filePath, dir) : undefined,
+					graph: present ? buildFileGraph(filePath, dir, resCtx) : undefined,
 				};
 			});
 			units.push({
