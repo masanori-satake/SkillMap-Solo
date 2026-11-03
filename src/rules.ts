@@ -584,7 +584,12 @@ export function evaluateSteering(
 			});
 		}
 		// S1: inclusion 未指定
-		if (!unit.inclusionExplicit) {
+		// ただし Kiro が自動生成する予約 Steering（.kiro/steering 直下の product/structure/tech）は
+		// 常時ロードが前提の設計で inclusion を書かないのが正規の形のため、警告から除外する
+		const isKiroReserved =
+			['product.md', 'structure.md', 'tech.md'].includes(path.basename(unit.filePath)) &&
+			path.basename(path.dirname(unit.filePath)) === 'steering';
+		if (!unit.inclusionExplicit && !isKiroReserved) {
 			warnings.push({
 				ruleId: 'S1',
 				severity: 'info',

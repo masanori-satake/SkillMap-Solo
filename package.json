@@ -141,16 +141,19 @@
         {
           "command": "skillmap.refresh",
           "group": "navigation",
+          "order": 1,
           "when": "view == skillmap-view"
         },
         {
           "command": "skillmap.showLoadMatrix",
           "group": "navigation",
+          "order": 2,
           "when": "view == skillmap-view"
         },
         {
           "command": "skillmap.expandAll",
           "group": "navigation",
+          "order": 3,
           "when": "view == skillmap-view"
         }
       ]
