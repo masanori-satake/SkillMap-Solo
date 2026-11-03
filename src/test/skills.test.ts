@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, rootLabels, scopeRootFor } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, rootLabels, scopeRootFor } from '../skills.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
@@ -236,8 +236,8 @@ description: 言及の段階化テスト用。テストを実行するときに�
 	const skill = groupSkills([unit], ['.agents'])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	const byRule = (id: string) => warnings.filter((w) => w.ruleId === id);
-	assert.equal(byRule('R7').length, 3, 'リンク2件＋パス付きコードスパン1件が参照切れ');
-	assert.ok(byRule('R7').every((w) => w.severity === 'warn'), 'R7 は warn に緩和');
+	assert.equal(byRule('R7').length, 3, 'リンク2件＋パス付きコードスパン1件が未解決の参照');
+	assert.ok(byRule('R7').every((w) => w.severity === 'info'), 'R7 は参考情報として info に統一');
 	assert.equal(byRule('R13').length, 2, 'planned.md と 要件定義.md が要確認の言及');
 	assert.ok(byRule('R13').every((w) => w.severity === 'info'), 'R13 は info');
 
@@ -302,4 +302,93 @@ description: 突合テスト用。テストを実行するときに使う。
 	assert.equal(r7.line, r13.line, '同じ行');
 	assert.ok(r7.target?.endsWith('gone-a.md'));
 	assert.ok(r13.target?.endsWith('planned-b.md'));
+});
+
+test('候補判定: プロパティチェーンはファイル候補にしない（拡張子の前提）', () => {
+	const root = tmpRoot();
+	const from = path.join(root, 'a.md');
+	const text = [
+		'`on.push.paths` は YAML のキー経路。',
+		'`chrome.storage.local.get` は API。',
+		'`state.groupSets` はプロパティ参照。',
+		'`a.b.c.md` と `sidepanel.test.js` はファイル名として扱う。',
+	].join('\n');
+	const edges = extractReferences(from, text);
+	const raws = edges.map((e) => e.raw).sort();
+	assert.deepEqual(raws, ['a.b.c.md', 'sidepanel.test.js']);
+});
+
+test('解決の拡張: スキルルート相対と同名一意一致で結びつく', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/resolve/SKILL.md',
+		`---
+name: resolve
+description: 解決拡張のテスト用。テストを実行するときに使う。
+---
+
+# Resolve
+
+[inner](references/inner.md)
+`,
+	);
+	write(root, 'skills/resolve/references/guide.md', '# Guide\n');
+	write(root, 'skills/resolve/assets/unique-note.md', '# Unique\n');
+	write(
+		root,
+		'skills/resolve/references/inner.md',
+		`# Inner
+
+スキルルート相対の \`references/guide.md\` と、名前だけの \`unique-note.md\` を参照する。
+`,
+	);
+	const unit = buildUnit(path.join(root, 'skills/resolve'));
+	const inner = unit.files.get(path.join(root, 'skills/resolve/references/inner.md'));
+	assert.ok(inner, 'inner.md が読めている');
+	const guide = inner.refs.find((e) => e.raw === 'references/guide.md');
+	assert.ok(guide?.exists, 'スキルルート相対で guide.md に解決する');
+	assert.ok(guide.target.endsWith(path.join('references', 'guide.md')));
+	const unique = inner.refs.find((e) => e.raw === 'unique-note.md');
+	assert.ok(unique?.exists, '同名一意で unique-note.md に解決する');
+	assert.ok(unique.target.endsWith(path.join('assets', 'unique-note.md')));
+	// 解決できた参照は警告にならない
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	assert.equal(warnings.filter((w) => w.ruleId === 'R7' || w.ruleId === 'R13').length, 0);
+});
+
+test('解決の拡張: 同名が複数ある場合は曖昧なので結ばない', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/ambig/SKILL.md',
+		`---
+name: ambig
+description: 曖昧な同名のテスト用。テストを実行するときに使う。
+---
+
+# Ambig
+
+\`dup.md\` を参照する。
+`,
+	);
+	write(root, 'skills/ambig/a/dup.md', '# A\n');
+	write(root, 'skills/ambig/b/dup.md', '# B\n');
+	const unit = buildUnit(path.join(root, 'skills/ambig'));
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	assert.equal(warnings.filter((w) => w.ruleId === 'R13').length, 1, '曖昧な同名は要確認のまま');
+});
+
+test('候補判定: 未知の拡張子でも実在するファイルは候補になる', () => {
+	const root = tmpRoot();
+	write(root, 'docs/diagram.mmd', 'graph TD;\n');
+	const from = path.join(root, 'docs/a.md');
+	const resCtx = buildResolutionContext([], [root]);
+	const edges = extractReferences(from, '`diagram.mmd` を参照。`other.mmd` は無い。\n', resCtx);
+	// diagram.mmd は実在するため候補になり解決する。other.mmd は存在せず拡張子も未知なので候補にならない
+	assert.equal(edges.length, 1);
+	assert.equal(edges[0].raw, 'diagram.mmd');
+	assert.equal(edges[0].exists, true);
 });

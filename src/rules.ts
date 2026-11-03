@@ -123,15 +123,15 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 	},
 	R7: {
 		id: 'R7',
-		title: { ja: '参照切れ', en: 'Broken reference' },
+		title: { ja: '未解決の参照', en: 'Unresolved reference' },
 		tip: {
 			principle: {
-				ja: '参照切れは、AI が辿ろうとして行き止まりになる道です。',
-				en: 'A broken reference is a dead end the AI runs into when following your map.',
+				ja: '文書中のパスやファイル名は、離れた箇所の記述と組み合わせて初めて意味が通ることも多く、解決できないこと自体は不具合とは限りません。',
+				en: 'A path or file name in the text often makes sense only together with passages elsewhere in the document, so an unresolved reference is not necessarily a defect.',
 			},
 			fix: {
-				ja: 'ファイルの移動・改名に合わせて参照を直すか、不要になった参照を消してください。',
-				en: 'Update the reference when files move or are renamed, or delete references that are no longer needed.',
+				ja: '参照を意図している場合には、パスの起点や表記を確認してください（解決はスキルルート・フォルダ相対でも試みられます）。文脈で意味が通る書き方であれば、そのままで問題ありません。',
+				en: 'If a reference was intended, check the base of the path and its spelling (resolution is also attempted from the skill root and the workspace folder). If the wording reads fine in context, no action is needed.',
 			},
 		},
 	},
@@ -528,7 +528,7 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 			if (isTentativeMention(edge)) {
 				push({ ruleId: 'R13', severity: 'info', message: L(`同名のファイルが見つかりません: ${edge.raw}`, `No file with this name was found: ${edge.raw}`), file: from, line: edge.line, target: edge.target });
 			} else {
-				push({ ruleId: 'R7', severity: 'warn', message: L(`参照先が存在しません: ${edge.raw}`, `Reference target does not exist: ${edge.raw}`), file: from, line: edge.line, target: edge.target });
+				push({ ruleId: 'R7', severity: 'info', message: L(`参照先が見つかりません: ${edge.raw}`, `Reference target was not found: ${edge.raw}`), file: from, line: edge.line, target: edge.target });
 			}
 		}
 	}

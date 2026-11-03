@@ -104,15 +104,15 @@ export class MapNode {
 		return out;
 	}
 
-	/** ⚠バッジの件数（R13 は気づきの提示であり、件数には数えない） */
+	/** ⚠バッジの件数（R7 / R13 は参考情報であり、件数には数えない） */
 	badgeWarnings(): number {
-		return this.allWarnings().filter((w) => w.ruleId !== 'R13').length;
+		return this.allWarnings().filter((w) => w.ruleId !== 'R13' && w.ruleId !== 'R7').length;
 	}
 }
 
-/** ⚠バッジの件数（配列版。R13 は数えない） */
+/** ⚠バッジの件数（配列版。R7 / R13 は数えない） */
 function badgeCount(warnings: SkillWarning[]): number {
-	return warnings.filter((w) => w.ruleId !== 'R13').length;
+	return warnings.filter((w) => w.ruleId !== 'R13' && w.ruleId !== 'R7').length;
 }
 
 export class SkillMapModel {
@@ -463,9 +463,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'copilot':
 				return node.copilotUnit?.name ?? '';
 			case 'missing':
-				return node.tentative
-					? `${path.basename(node.filePath ?? '')} ${L('（要確認）', '(to check)')}`
-					: `${path.basename(node.filePath ?? '')} ${L('（参照切れ）', '(broken reference)')}`;
+				// ラベルはファイル名のみ。状態は説明（1語）とホバーが担う（§10.1）
+				return path.basename(node.filePath ?? '');
 			case 'cycle':
 				return `${path.basename(node.filePath ?? '')} ${L('（循環）', '(cycle)')}`;
 			default:
@@ -546,7 +545,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				if (node.specUnit) {
 					return L('未作成', 'not created');
 				}
-				return node.tentative ? L('要確認', 'needs checking') : L('存在しません', 'does not exist');
+				return node.tentative ? L('要確認', 'needs checking') : L('未解決', 'unresolved');
 			case 'file':
 			case 'orphan':
 			case 'cycle': {
@@ -596,16 +595,19 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'orphanGroup':
 				return new vscode.ThemeIcon('archive');
 			case 'missing':
-				// ファイル名のみの言及（R13）は参照切れと断定できないため、中立色のファイルアイコンにする
-				return node.tentative
-					? new vscode.ThemeIcon('file', new vscode.ThemeColor('disabledForeground'))
-					: new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
+				// Spec の未作成ファイルは「作るべきものの欠落」なのでエラー表示を維持する
+				if (node.specUnit) {
+					return new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
+				}
+				// 未解決の参照は不具合と断定しないため、R7 / R13 ともに中立色のファイルアイコンにする
+				return new vscode.ThemeIcon('file', new vscode.ThemeColor('disabledForeground'));
 			case 'cycle':
 				return new vscode.ThemeIcon('sync', new vscode.ThemeColor('editorWarning.foreground'));
 			case 'orphan':
 				return new vscode.ThemeIcon('file', new vscode.ThemeColor('disabledForeground'));
 			default:
-				if (node.warnings.length > 0) {
+				// 警告アイコンは error / warn のときだけ。info（参考情報）だけでは切り替えない
+				if (node.warnings.some((w) => w.severity !== 'info')) {
 					return new vscode.ThemeIcon('warning', new vscode.ThemeColor('editorWarning.foreground'));
 				}
 				return new vscode.ThemeIcon(node.boundary ? 'file-symlink-file' : 'file');

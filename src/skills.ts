@@ -152,7 +152,71 @@ const CODE_SPAN_RE = /`([^`\n]+)`/g;
 const PATH_LIKE_RE =
 	/^[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+(\/[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+)+(\.[^\s\/.\[\](){}<>"'|=;:,!?*#$&\\]{1,10})?$|^[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+(\.[^\s\/.\[\](){}<>"'|=;:,!?*#$&\\]{1,10})$/;
 
-export function extractReferences(fromFile: string, text: string): RefEdge[] {
+// ファイルらしい拡張子の集合。「ファイル名のみ」のコードスパン候補は、末尾の
+// 拡張子がこの集合にあるときだけファイル候補とする。`on.push.paths` や
+// `chrome.storage.local.get` のようなプロパティチェーン（末尾が paths / get 等）は
+// ファイルではないため、候補から外してノイズを減らす（v2-design §10.5）。
+const KNOWN_FILE_EXTENSIONS = new Set([
+	'md', 'markdown', 'mdx', 'txt', 'text', 'rst', 'adoc', 'org', 'tex',
+	'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'env', 'xml',
+	'html', 'htm', 'css', 'scss', 'sass', 'less',
+	'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts',
+	'py', 'rb', 'pl', 'php', 'go', 'rs', 'java', 'kt', 'kts', 'scala', 'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'cs', 'swift',
+	'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd',
+	'sql', 'graphql', 'gql', 'proto', 'csv', 'tsv',
+	'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'pdf',
+	'zip', 'gz', 'tar', 'lock', 'astro', 'vue', 'svelte', 'ipynb', 'lua', 'dart', 'r',
+]);
+
+/** コードスパンの「ファイル名のみ」候補が、ファイルらしい拡張子を持つか */
+function hasFileLikeExtension(candidate: string): boolean {
+	if (candidate.includes('/')) {
+		return true; // パス付きは参照として扱い、対象外
+	}
+	const ext = candidate.split('.').pop()?.toLowerCase() ?? '';
+	return KNOWN_FILE_EXTENSIONS.has(ext);
+}
+
+/**
+ * 参照の解決コンテキスト。参照元ファイル相対で解決できない場合に、
+ * 追加の起点（スキルルートやワークスペースフォルダ）からも解決を試みる。
+ * また、ファイル名のみの言及は、索引内に同名ファイルがちょうど1つだけ
+ * 存在すれば、そのファイルへの参照として解決する（v2-design §10.2）。
+ */
+export interface ResolutionContext {
+	/** 追加の解決起点（絶対パス） */
+	bases: string[];
+	/** ファイル名 → 絶対パスの一覧（同名の一意判定用） */
+	byBasename: Map<string, string[]>;
+}
+
+export function buildResolutionContext(bases: string[], indexRoots: string[]): ResolutionContext {
+	const byBasename = new Map<string, string[]>();
+	for (const root of indexRoots) {
+		const files: string[] = [];
+		listFilesRecursive(root, 0, files);
+		for (const f of files) {
+			const arr = byBasename.get(path.basename(f)) ?? [];
+			arr.push(f);
+			byBasename.set(path.basename(f), arr);
+		}
+	}
+	return { bases: [...new Set(bases.filter(Boolean))], byBasename };
+}
+
+function existsOnDisk(p: string): boolean {
+	try {
+		fs.statSync(p);
+		return true;
+	} catch (err) {
+		// 不在と断定できるのは ENOENT / ENOTDIR のみ。権限エラー等で読めないだけの
+		// ファイルを「不在」として別の同名ファイルへ付け替えないよう、存在側に倒す
+		const code = (err as NodeJS.ErrnoException).code;
+		return code !== 'ENOENT' && code !== 'ENOTDIR';
+	}
+}
+
+export function extractReferences(fromFile: string, text: string, resCtx?: ResolutionContext): RefEdge[] {
 	const edges: RefEdge[] = [];
 	const byTarget = new Map<string, RefEdge>();
 	const fromDir = path.dirname(fromFile);
@@ -161,7 +225,25 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 		if (!cleaned || cleaned.includes('://') || cleaned.startsWith('mailto:') || cleaned.startsWith('/')) {
 			return;
 		}
-		const target = path.resolve(fromDir, cleaned);
+		let target = path.resolve(fromDir, cleaned);
+		// 参照元相対で実在しない場合は、追加の起点からも解決を試みる（§10.2）。
+		// パス付きはスキルルート・フォルダ相対、ファイル名のみは同名ファイルの一意一致。
+		if (resCtx && !existsOnDisk(target)) {
+			if (cleaned.includes('/')) {
+				for (const base of resCtx.bases) {
+					const alt = path.resolve(base, cleaned);
+					if (alt !== target && existsOnDisk(alt)) {
+						target = alt;
+						break;
+					}
+				}
+			} else {
+				const matches = [...new Set(resCtx.byBasename.get(path.basename(cleaned)) ?? [])];
+				if (matches.length === 1 && matches[0] !== fromFile) {
+					target = matches[0];
+				}
+			}
+		}
 		if (target === fromFile) {
 			return;
 		}
@@ -176,7 +258,7 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 				existing.via = 'link';
 			}
 			// パス付きで書かれた箇所が1つでもあれば、そちらを代表表記にして
-			// 「ファイル名のみの言及」（R13）ではなく参照切れ（R7）として扱う
+			// 「ファイル名のみの言及」（R13）ではなく未解決の参照（R7）として扱う
 			if (cleaned.includes('/') && !existing.raw.includes('/')) {
 				existing.raw = cleaned;
 			}
@@ -206,7 +288,11 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 		CODE_SPAN_RE.lastIndex = 0;
 		while ((m = CODE_SPAN_RE.exec(lineText)) !== null) {
 			const candidate = m[1].trim();
-			if (PATH_LIKE_RE.test(candidate)) {
+			// 拡張子が未知でも、索引内に実在する同名ファイルがあれば候補にする
+			// （実在するものを拡張子リストだけで除外しない）。存在しない
+			// プロパティチェーンは索引にも無いため、引き続き除外される
+			const existsInIndex = resCtx?.byBasename.has(path.basename(candidate)) ?? false;
+			if (PATH_LIKE_RE.test(candidate) && (hasFileLikeExtension(candidate) || existsInIndex)) {
 				push(candidate, i, 'code');
 			}
 		}
@@ -214,7 +300,7 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 	return edges;
 }
 
-export function readFileInfo(absPath: string, skillDir: string): FileInfo {
+export function readFileInfo(absPath: string, skillDir: string, resCtx?: ResolutionContext): FileInfo {
 	const relToSkill = path.relative(skillDir, absPath);
 	const boundary = relToSkill.startsWith('..' + path.sep) || path.isAbsolute(relToSkill);
 	let exists = false;
@@ -233,7 +319,7 @@ export function readFileInfo(absPath: string, skillDir: string): FileInfo {
 				text = buf.toString('utf8');
 				tokens = estimateTokens(text);
 				lines = countLines(text);
-				refs = extractReferences(absPath, text);
+				refs = extractReferences(absPath, text, resCtx);
 			}
 		}
 	} catch {
@@ -244,7 +330,9 @@ export function readFileInfo(absPath: string, skillDir: string): FileInfo {
 
 export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 	const skillMdPath = path.join(skillDir, 'SKILL.md');
-	const skillInfo = readFileInfo(skillMdPath, skillDir);
+	// 解決の追加起点はスキルルートと所属フォルダ。同名索引はスキル内ファイルから作る
+	const resCtx = buildResolutionContext([skillDir, sourceRoot], [skillDir]);
+	const skillInfo = readFileInfo(skillMdPath, skillDir, resCtx);
 	const content = skillInfo.text ?? '';
 	const frontmatter = parseFrontmatter(content);
 	const name = (frontmatter.name ?? '').trim() || path.basename(skillDir);
@@ -278,7 +366,7 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 		for (const edge of info.refs) {
 			if (edge.isDirectory) {
 				if (!files.has(edge.target)) {
-					files.set(edge.target, readFileInfo(edge.target, skillDir));
+					files.set(edge.target, readFileInfo(edge.target, skillDir, resCtx));
 					depthDisplay.set(edge.target, current.depth + 1);
 					if (!files.get(edge.target)!.boundary && current.ownedDepth >= 0) {
 						depthOwned.set(edge.target, current.ownedDepth + 1);
@@ -290,7 +378,7 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 				continue;
 			}
 			if (!files.has(edge.target)) {
-				files.set(edge.target, readFileInfo(edge.target, skillDir));
+				files.set(edge.target, readFileInfo(edge.target, skillDir, resCtx));
 			}
 			if (!depthDisplay.has(edge.target)) {
 				const targetInfo = files.get(edge.target)!;
@@ -456,11 +544,11 @@ export interface FileGraph {
 	reachable: Set<string>;
 }
 
-export function buildFileGraph(rootPath: string, ownedDir: string): FileGraph {
+export function buildFileGraph(rootPath: string, ownedDir: string, resCtx?: ResolutionContext): FileGraph {
 	const files = new Map<string, FileInfo>();
 	const depthDisplay = new Map<string, number>();
 	const reachable = new Set<string>();
-	const rootInfo = readFileInfo(rootPath, ownedDir);
+	const rootInfo = readFileInfo(rootPath, ownedDir, resCtx);
 	files.set(rootPath, rootInfo);
 	const queue: Array<{ p: string; depth: number }> = [{ p: rootPath, depth: 0 }];
 	while (queue.length > 0) {
@@ -476,7 +564,7 @@ export function buildFileGraph(rootPath: string, ownedDir: string): FileGraph {
 		}
 		for (const edge of info.refs) {
 			if (!files.has(edge.target)) {
-				files.set(edge.target, readFileInfo(edge.target, ownedDir));
+				files.set(edge.target, readFileInfo(edge.target, ownedDir, resCtx));
 			}
 			if (edge.exists && !edge.isDirectory && !depthDisplay.has(edge.target)) {
 				queue.push({ p: edge.target, depth: current.depth + 1 });
