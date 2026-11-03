@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildResolutionContext, buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, rootLabels, scopeRootFor } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, listAllFiles, readFileInfo, rootLabels, scopeRootFor } from '../skills.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
@@ -385,10 +385,32 @@ test('候補判定: 未知の拡張子でも実在するファイルは候補に
 	const root = tmpRoot();
 	write(root, 'docs/diagram.mmd', 'graph TD;\n');
 	const from = path.join(root, 'docs/a.md');
-	const resCtx = buildResolutionContext([], [root]);
+	const resCtx = buildResolutionContext([], listAllFiles(root));
 	const edges = extractReferences(from, '`diagram.mmd` を参照。`other.mmd` は無い。\n', resCtx);
 	// diagram.mmd は実在するため候補になり解決する。other.mmd は存在せず拡張子も未知なので候補にならない
 	assert.equal(edges.length, 1);
 	assert.equal(edges[0].raw, 'diagram.mmd');
 	assert.equal(edges[0].exists, true);
+});
+
+test('findSkillDirs: 走査結果を渡しても発見結果は同じ', () => {
+	const root = tmpRoot();
+	write(root, 'skills/x/SKILL.md', '---\nname: x\ndescription: 発見テスト用。テストを実行するときに使う。\n---\n\n# X\n');
+	const viaWalk = findSkillDirs([root], []);
+	const viaKnown = findSkillDirs([root], [], new Map([[root, listAllFiles(root)]]));
+	assert.deepEqual(viaKnown, viaWalk);
+	assert.equal(viaKnown.length, 1);
+});
+
+test('内容キャッシュ: ファイル変更後は新しい内容で評価される', () => {
+	const root = tmpRoot();
+	write(root, 'c.md', '# A\n\n短い。\n');
+	const p = path.join(root, 'c.md');
+	const first = readFileInfo(p, root);
+	write(root, 'other.md', '# Other\n');
+	write(root, 'c.md', '# A\n\nもっと長い本文がここに入ります。参照は `other.md` です。\n');
+	const second = readFileInfo(p, root);
+	assert.ok(second.tokens > first.tokens, '変更後の内容でトークンが再計算される');
+	assert.equal(second.refs.length, 1, '変更後の参照が抽出される');
+	assert.equal(second.refs[0].exists, true);
 });

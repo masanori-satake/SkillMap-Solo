@@ -6,6 +6,7 @@ import { estimateTokens } from './tokens.js';
 import {
 	buildFileGraph,
 	buildResolutionContext,
+	listAllFiles,
 	listFilesRecursive,
 	readFileInfo,
 	type FileGraph,
@@ -85,15 +86,16 @@ export function filesEqual(a: string, b: string): boolean {
 }
 
 /** .kiro/steering 配下の Steering ファイルを発見する */
-export function discoverSteering(workspaceRoots: string[], canonicalRoots: string[]): SteeringUnit[] {
+export function discoverSteering(workspaceRoots: string[], canonicalRoots: string[], knownFiles?: Map<string, string[]>): SteeringUnit[] {
 	const units: SteeringUnit[] = [];
 	for (const root of workspaceRoots) {
 		const steeringDir = path.join(root, '.kiro', 'steering');
 		if (!fs.existsSync(steeringDir)) {
 			continue;
 		}
-		// 参照の解決はフォルダ相対とフォルダ内の同名一意一致も試みる（§10.2）
-		const resCtx = buildResolutionContext([root], [root]);
+		// 参照の解決はフォルダ相対とフォルダ内の同名一意一致も試みる（§10.2）。
+		// フォルダ内の全ファイルは呼び出し側の走査結果を再利用する（無ければここで歩く）
+		const resCtx = buildResolutionContext([root], knownFiles?.get(root) ?? listAllFiles(root));
 		const files: string[] = [];
 		listFilesRecursive(steeringDir, 0, files);
 		for (const filePath of files.sort()) {
@@ -133,7 +135,7 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 }
 
 /** .kiro/specs 配下の Spec ディレクトリを発見する */
-export function discoverSpecs(workspaceRoots: string[]): SpecUnit[] {
+export function discoverSpecs(workspaceRoots: string[], knownFiles?: Map<string, string[]>): SpecUnit[] {
 	const units: SpecUnit[] = [];
 	const roles: Array<{ role: SpecUnit['files'][number]['role']; fileName: string }> = [
 		{ role: 'requirements', fileName: 'requirements.md' },
@@ -145,8 +147,9 @@ export function discoverSpecs(workspaceRoots: string[]): SpecUnit[] {
 		if (!fs.existsSync(specsDir)) {
 			continue;
 		}
-		// 参照の解決はフォルダ相対とフォルダ内の同名一意一致も試みる（§10.2）
-		const resCtx = buildResolutionContext([root], [root]);
+		// 参照の解決はフォルダ相対とフォルダ内の同名一意一致も試みる（§10.2）。
+		// フォルダ内の全ファイルは呼び出し側の走査結果を再利用する（無ければここで歩く）
+		const resCtx = buildResolutionContext([root], knownFiles?.get(root) ?? listAllFiles(root));
 		let entries: fs.Dirent[];
 		try {
 			entries = fs.readdirSync(specsDir, { withFileTypes: true });
@@ -184,7 +187,7 @@ export function discoverSpecs(workspaceRoots: string[]): SpecUnit[] {
 }
 
 /** Copilot instructions 系ファイル（読み取り表示専用）を発見する */
-export function discoverCopilot(workspaceRoots: string[]): CopilotUnit[] {
+export function discoverCopilot(workspaceRoots: string[], knownFiles?: Map<string, string[]>): CopilotUnit[] {
 	const units: CopilotUnit[] = [];
 	const push = (filePath: string, mode: CopilotUnit['mode'], root: string, applyTo?: string) => {
 		if (!fs.existsSync(filePath)) {
@@ -214,10 +217,10 @@ export function discoverCopilot(workspaceRoots: string[]): CopilotUnit[] {
 				push(filePath, 'applyTo', root, fm.values['applyTo']?.trim() || undefined);
 			}
 		}
-		// AGENTS.md はワークスペース内のものを拾う（深さ制限つき）
-		const all: string[] = [];
-		listFilesRecursive(root, 0, all);
-		for (const filePath of all.sort()) {
+		// AGENTS.md はワークスペース内のものを拾う（深さ制限つき）。
+		// 全ファイルは呼び出し側の走査結果を再利用する（無ければここで歩く）
+		const all = knownFiles?.get(root) ?? listAllFiles(root);
+		for (const filePath of [...all].sort()) {
 			if (path.basename(filePath) === 'AGENTS.md') {
 				push(filePath, 'always', root);
 			}
