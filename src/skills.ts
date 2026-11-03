@@ -82,7 +82,7 @@ function isProbablyText(buf: Buffer): boolean {
 	return true;
 }
 
-function listFilesRecursive(dir: string, depth: number, out: string[]): void {
+export function listFilesRecursive(dir: string, depth: number, out: string[]): void {
 	if (depth > MAX_WALK_DEPTH) {
 		return;
 	}
@@ -180,7 +180,7 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 	return edges;
 }
 
-function readFileInfo(absPath: string, skillDir: string): FileInfo {
+export function readFileInfo(absPath: string, skillDir: string): FileInfo {
 	const relToSkill = path.relative(skillDir, absPath);
 	const boundary = relToSkill.startsWith('..' + path.sep) || path.isAbsolute(relToSkill);
 	let exists = false;
@@ -361,4 +361,43 @@ export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): Logic
 /** ルート表示用の階層ラベル（SKILL.md が L2、その参照先が L3、以降 L4, L5...） */
 export function layerLabel(depthDisplay: number): string {
 	return `L${depthDisplay + 2}`;
+}
+
+/** 任意のファイルを起点にした参照グラフ（Steering 等の単一ファイル起点用） */
+export interface FileGraph {
+	rootPath: string;
+	ownedDir: string;
+	files: Map<string, FileInfo>;
+	depthDisplay: Map<string, number>;
+	reachable: Set<string>;
+}
+
+export function buildFileGraph(rootPath: string, ownedDir: string): FileGraph {
+	const files = new Map<string, FileInfo>();
+	const depthDisplay = new Map<string, number>();
+	const reachable = new Set<string>();
+	const rootInfo = readFileInfo(rootPath, ownedDir);
+	files.set(rootPath, rootInfo);
+	const queue: Array<{ p: string; depth: number }> = [{ p: rootPath, depth: 0 }];
+	while (queue.length > 0) {
+		const current = queue.shift()!;
+		if (depthDisplay.has(current.p)) {
+			continue;
+		}
+		depthDisplay.set(current.p, current.depth);
+		reachable.add(current.p);
+		const info = files.get(current.p);
+		if (!info) {
+			continue;
+		}
+		for (const edge of info.refs) {
+			if (!files.has(edge.target)) {
+				files.set(edge.target, readFileInfo(edge.target, ownedDir));
+			}
+			if (edge.exists && !edge.isDirectory && !depthDisplay.has(edge.target)) {
+				queue.push({ p: edge.target, depth: current.depth + 1 });
+			}
+		}
+	}
+	return { rootPath, ownedDir, files, depthDisplay, reachable };
 }

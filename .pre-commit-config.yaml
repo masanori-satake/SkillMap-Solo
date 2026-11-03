@@ -1,0 +1,15 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+  - repo: local
+    hooks:
+      - id: check-version
+        name: check version bump and consistency
+        entry: scripts/run-pre-commit-check.sh
+        language: script
+        pass_filenames: false

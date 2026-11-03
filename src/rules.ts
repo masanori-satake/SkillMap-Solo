@@ -111,6 +111,48 @@ export const RULES: Record<string, RuleDef> = {
 			fix: '複製を再実行して正本に揃えてください。複製側を直接編集しても、次の複製で上書きされます。',
 		},
 	},
+	S1: {
+		id: 'S1',
+		title: 'Steering の inclusion 未指定',
+		tip: {
+			principle: 'inclusion 未指定の Steering は暗黙に「常時ロード」扱いとなり、全セッションで固定費を払い続けます。',
+			fix: 'frontmatter に inclusion を明示してください。特定ファイルでのみ必要なものは fileMatch、任意で読み込むものは manual が向きます。',
+			good: 'inclusion: fileMatch\nfileMatchPattern: "src/**/*.tsx"',
+			bad: '（frontmatter なし）',
+		},
+	},
+	S2: {
+		id: 'S2',
+		title: 'fileMatchPattern が何にも一致しない',
+		tip: {
+			principle: '条件が実ファイルに一致しない Steering は「効いているつもり」で誰にも読まれません。',
+			fix: 'パターンの書き間違い（拡張子、ディレクトリ名、** の位置）を確認してください。対象ファイルが消えたなら Steering 自体の棚卸しどきです。',
+		},
+	},
+	S3: {
+		id: 'S3',
+		title: 'Steering 常時ロードの合計予算',
+		tip: {
+			principle: '常時ロードの合計は、Kiro を使う全セッションの固定費です。個別には小さくても合算で効いてきます。',
+			fix: '使用頻度の低いものから fileMatch / manual へ移すか、内容を要約して薄くしてください。',
+		},
+	},
+	S4: {
+		id: 'S4',
+		title: 'Spec の3点セットの欠け',
+		tip: {
+			principle: 'requirements（何を作るか）→ design（どう作るか）→ tasks（作業分解）の3点が揃って、仕様駆動の流れが保たれます。',
+			fix: '欠けているファイルを作成してください。意図的に不要な段階を飛ばす場合は、その旨を残りのファイルに一言書いておくと読み手が迷いません。',
+		},
+	},
+	S5: {
+		id: 'S5',
+		title: 'Steering の正本と複製の乖離',
+		tip: {
+			principle: 'Steering も正本と複製がずれれば、Kiro 側だけ古い方針で動き続けます。',
+			fix: '複製を再実行して正本に揃えてください（R11 と同じ考え方です）。',
+		},
+	},
 };
 
 export interface RuleSettings {
@@ -120,6 +162,7 @@ export interface RuleSettings {
 	maxReferenceDepth: number;
 	skillTotalTokenBudget: number;
 	orphanFiles: 'off' | 'info' | 'warn';
+	steeringAlwaysTokenBudget: number;
 }
 
 export const DEFAULT_RULE_SETTINGS: RuleSettings = {
@@ -129,6 +172,7 @@ export const DEFAULT_RULE_SETTINGS: RuleSettings = {
 	maxReferenceDepth: 2,
 	skillTotalTokenBudget: 0,
 	orphanFiles: 'info',
+	steeringAlwaysTokenBudget: 0,
 };
 
 export interface SkillWarning {
@@ -322,5 +366,93 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 		}
 	}
 
+	return warnings;
+}
+
+import {
+	filesEqual,
+	patternMatchesAny,
+	type SpecUnit,
+	type SteeringUnit,
+} from './contexts.js';
+
+export function evaluateSteering(
+	units: SteeringUnit[],
+	workspaceRelPaths: string[],
+	settings: RuleSettings,
+): SkillWarning[] {
+	const warnings: SkillWarning[] = [];
+	for (const unit of units) {
+		// S1: inclusion 未指定
+		if (!unit.inclusionExplicit) {
+			warnings.push({
+				ruleId: 'S1',
+				severity: 'info',
+				message: 'inclusion が未指定です（暗黙に常時ロード扱いになります）',
+				file: unit.filePath,
+				line: 0,
+			});
+		}
+		// S2: fileMatch の死パターン
+		if (unit.inclusion === 'fileMatch') {
+			if (!unit.fileMatchPattern) {
+				warnings.push({
+					ruleId: 'S2',
+					severity: 'warn',
+					message: 'inclusion: fileMatch ですが fileMatchPattern がありません',
+					file: unit.filePath,
+					line: 0,
+				});
+			} else if (!patternMatchesAny(unit.fileMatchPattern, workspaceRelPaths)) {
+				warnings.push({
+					ruleId: 'S2',
+					severity: 'warn',
+					message: `fileMatchPattern「${unit.fileMatchPattern}」に一致するファイルがワークスペース内にありません`,
+					file: unit.filePath,
+					line: 0,
+				});
+			}
+		}
+		// S5: 正本との乖離
+		if (unit.canonicalCounterpart && !filesEqual(unit.canonicalCounterpart, unit.filePath)) {
+			warnings.push({
+				ruleId: 'S5',
+				severity: 'warn',
+				message: '正本（.agents 配下）と内容が乖離しています',
+				file: unit.filePath,
+				line: 0,
+			});
+		}
+	}
+	// S3: 常時ロード合計の予算
+	if (settings.steeringAlwaysTokenBudget > 0 && units.length > 0) {
+		const alwaysUnits = units.filter((u) => u.inclusion === 'always');
+		const total = alwaysUnits.reduce((s, u) => s + u.tokens, 0);
+		if (total > settings.steeringAlwaysTokenBudget) {
+			warnings.push({
+				ruleId: 'S3',
+				severity: 'warn',
+				message: `Steering 常時ロードの合計が予算を超えています（約${total.toLocaleString()} / 予算 約${settings.steeringAlwaysTokenBudget.toLocaleString()}）`,
+				file: path.dirname(units[0].filePath),
+			});
+		}
+	}
+	return warnings;
+}
+
+export function evaluateSpecs(units: SpecUnit[]): SkillWarning[] {
+	const warnings: SkillWarning[] = [];
+	for (const unit of units) {
+		for (const f of unit.files) {
+			if (!f.present) {
+				warnings.push({
+					ruleId: 'S4',
+					severity: 'info',
+					message: `Spec「${unit.name}」に ${f.fileName} がありません`,
+					file: unit.dir,
+				});
+			}
+		}
+	}
 	return warnings;
 }

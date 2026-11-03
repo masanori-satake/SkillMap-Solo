@@ -21,3 +21,6 @@ esbuild.js
 # AI エージェント・ツール関連 (AI agent & tool files)
 AGENTS.md
 .agents/**
+
+# 開発補助スクリプト (Dev scripts)
+scripts/**

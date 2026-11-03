@@ -1,16 +1,28 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { buildUnit, findSkillDirs, groupSkills } from './skills.js';
 import {
+	discoverCopilot,
+	discoverSpecs,
+	discoverSteering,
+	listWorkspaceRelPaths,
+	simulateLoad,
+} from './contexts.js';
+import {
 	DEFAULT_RULE_SETTINGS,
 	evaluateSkill,
+	evaluateSpecs,
+	evaluateSteering,
 	type RuleSettings,
 	type SkillWarning,
 } from './rules.js';
 import { MapNode, SkillMapModel, SkillTreeProvider } from './treeProvider.js';
 import { renderTipMarkdown } from './tips.js';
+import { renderLoadMatrix } from './matrix.js';
 
 const TIP_SCHEME = 'skillmap-tip';
+const MATRIX_SCHEME = 'skillmap-matrix';
 
 class TipContentProvider implements vscode.TextDocumentContentProvider {
 	provideTextDocumentContent(uri: vscode.Uri): string {
@@ -21,7 +33,22 @@ class TipContentProvider implements vscode.TextDocumentContentProvider {
 	}
 }
 
-function readSettings(): { canonicalRoots: string[]; skillsRoots: string[]; rules: RuleSettings } {
+class MatrixContentProvider implements vscode.TextDocumentContentProvider {
+	constructor(private holder: { markdown: string }) {}
+	provideTextDocumentContent(): string {
+		return this.holder.markdown;
+	}
+}
+
+interface Settings {
+	canonicalRoots: string[];
+	skillsRoots: string[];
+	rules: RuleSettings;
+	betaSpecs: boolean;
+	betaLoadSimulation: boolean;
+}
+
+function readSettings(): Settings {
 	const cfg = vscode.workspace.getConfiguration('skillmap');
 	const rules: RuleSettings = {
 		skillBodyMaxLines: cfg.get<number>('rules.skillBodyMaxLines', DEFAULT_RULE_SETTINGS.skillBodyMaxLines),
@@ -30,11 +57,17 @@ function readSettings(): { canonicalRoots: string[]; skillsRoots: string[]; rule
 		maxReferenceDepth: cfg.get<number>('rules.maxReferenceDepth', DEFAULT_RULE_SETTINGS.maxReferenceDepth),
 		skillTotalTokenBudget: cfg.get<number>('rules.skillTotalTokenBudget', DEFAULT_RULE_SETTINGS.skillTotalTokenBudget),
 		orphanFiles: cfg.get<'off' | 'info' | 'warn'>('rules.orphanFiles', DEFAULT_RULE_SETTINGS.orphanFiles),
+		steeringAlwaysTokenBudget: cfg.get<number>(
+			'rules.steeringAlwaysTokenBudget',
+			DEFAULT_RULE_SETTINGS.steeringAlwaysTokenBudget,
+		),
 	};
 	return {
 		canonicalRoots: cfg.get<string[]>('canonicalRoots', ['.agents']),
 		skillsRoots: cfg.get<string[]>('skillsRoots', []),
 		rules,
+		betaSpecs: cfg.get<boolean>('beta.specs', true),
+		betaLoadSimulation: cfg.get<boolean>('beta.loadSimulation', true),
 	};
 }
 
@@ -55,7 +88,10 @@ export function activate(context: vscode.ExtensionContext): void {
 	const diagnostics = vscode.languages.createDiagnosticCollection('skillmap');
 	const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
 	statusBar.name = 'SkillMap 経路合計';
-	context.subscriptions.push(diagnostics, statusBar);
+	const simBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
+	simBar.name = 'SkillMap ロードシミュレーション（β）';
+	const matrixHolder = { markdown: '# SkillMap\n\n（データがありません）\n' };
+	context.subscriptions.push(diagnostics, statusBar, simBar);
 
 	const treeView = vscode.window.createTreeView('skillmap-view', {
 		treeDataProvider: provider,
@@ -63,24 +99,118 @@ export function activate(context: vscode.ExtensionContext): void {
 	});
 	context.subscriptions.push(treeView);
 	context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(TIP_SCHEME, new TipContentProvider()));
+	context.subscriptions.push(
+		vscode.workspace.registerTextDocumentContentProvider(MATRIX_SCHEME, new MatrixContentProvider(matrixHolder)),
+	);
 
+	let currentSettings = readSettings();
 	let refreshTimer: NodeJS.Timeout | undefined;
+
+	const updateDiagnostics = (all: SkillWarning[]) => {
+		diagnostics.clear();
+		const byFile = new Map<string, vscode.Diagnostic[]>();
+		for (const w of all) {
+			// 孤立（R9）と Spec 欠け（S4）と予算（S3）はツリー表示に寄せる
+			if (w.ruleId === 'R9' || w.ruleId === 'S4' || w.ruleId === 'S3') {
+				continue;
+			}
+			if (!fs.existsSync(w.file)) {
+				continue;
+			}
+			const line = Math.max(0, w.line ?? 0);
+			const diag = new vscode.Diagnostic(
+				new vscode.Range(line, 0, line, Number.MAX_SAFE_INTEGER),
+				`${w.ruleId}: ${w.message}`,
+				severityOf(w),
+			);
+			diag.source = 'SkillMap';
+			diag.code = w.ruleId;
+			const arr = byFile.get(w.file) ?? [];
+			arr.push(diag);
+			byFile.set(w.file, arr);
+		}
+		for (const [file, diags] of byFile) {
+			diagnostics.set(vscode.Uri.file(file), diags);
+		}
+	};
+
+	const updateSimulation = () => {
+		if (!currentSettings.betaLoadSimulation) {
+			simBar.hide();
+			return;
+		}
+		const editor = vscode.window.activeTextEditor;
+		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+		if (!editor || !workspaceRoot) {
+			simBar.hide();
+			return;
+		}
+		const rel = path.relative(workspaceRoot, editor.document.uri.fsPath).split(path.sep).join('/');
+		if (rel.startsWith('..')) {
+			simBar.hide();
+			return;
+		}
+		const sim = simulateLoad(rel, model.steering, model.copilot);
+		const kiroTotal = sim.kiro.reduce((s, x) => s + x.tokens, 0);
+		const copTotal = sim.copilot.reduce((s, x) => s + x.tokens, 0);
+		if (model.steering.length === 0 && model.copilot.length === 0) {
+			simBar.hide();
+			return;
+		}
+		simBar.text = `$(book) 読込β Kiro ≈${kiroTotal.toLocaleString()} / Copilot ≈${copTotal.toLocaleString()} tok`;
+		const lines = [`対象: ${rel}`, '', 'Kiro:'];
+		for (const x of sim.kiro) {
+			lines.push(`- ${x.name} ≈${x.tokens.toLocaleString()} tok（${x.reason}）`);
+		}
+		lines.push('', 'Copilot:');
+		for (const x of sim.copilot) {
+			lines.push(`- ${x.name} ≈${x.tokens.toLocaleString()} tok（${x.reason}）`);
+		}
+		lines.push('', '※ 簡易 glob 評価による目安です（β）');
+		simBar.tooltip = lines.join('\n');
+		simBar.show();
+	};
+
 	const rebuild = () => {
-		const settings = readSettings();
+		currentSettings = readSettings();
+		const settings = currentSettings;
 		const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
 		const extraRoots = settings.skillsRoots.map((r) =>
 			path.isAbsolute(r) ? r : path.join(workspaceRoots[0] ?? '', r),
 		);
+		// Skills
 		const dirs = findSkillDirs(workspaceRoots, extraRoots);
 		const units = dirs.map((d) => buildUnit(d));
 		const skills = groupSkills(units, settings.canonicalRoots);
-		const warnings = new Map<string, SkillWarning[]>();
+		const skillWarnings = new Map<string, SkillWarning[]>();
+		const allWarnings: SkillWarning[] = [];
 		for (const skill of skills) {
-			warnings.set(skill.key, evaluateSkill(skill, settings.rules));
+			const w = evaluateSkill(skill, settings.rules);
+			skillWarnings.set(skill.key, w);
+			allWarnings.push(...w);
 		}
-		model.setData(skills, warnings);
+		// Steering / Specs / Copilot
+		const steering = discoverSteering(workspaceRoots, settings.canonicalRoots);
+		const relPaths = listWorkspaceRelPaths(workspaceRoots);
+		const steeringWarnings = evaluateSteering(steering, relPaths, settings.rules);
+		const specs = discoverSpecs(workspaceRoots);
+		const specWarnings = evaluateSpecs(specs);
+		const copilot = discoverCopilot(workspaceRoots);
+		allWarnings.push(...steeringWarnings, ...specWarnings);
+
+		model.skills = skills;
+		model.skillWarnings = skillWarnings;
+		model.steering = steering;
+		model.steeringWarnings = steeringWarnings;
+		model.specs = specs;
+		model.specWarnings = specWarnings;
+		model.copilot = copilot;
+		model.betaSpecs = settings.betaSpecs;
+		matrixHolder.markdown = renderLoadMatrix(skills, steering, specs, copilot);
+
 		provider.refresh();
-		updateDiagnostics(diagnostics, warnings);
+		updateDiagnostics(allWarnings);
+		updateSimulation();
 	};
 	const scheduleRefresh = () => {
 		if (refreshTimer) {
@@ -89,49 +219,35 @@ export function activate(context: vscode.ExtensionContext): void {
 		refreshTimer = setTimeout(rebuild, 300);
 	};
 
-	const updateDiagnostics = (
-		collection: vscode.DiagnosticCollection,
-		warnings: Map<string, SkillWarning[]>,
-	) => {
-		collection.clear();
-		const byFile = new Map<string, vscode.Diagnostic[]>();
-		for (const list of warnings.values()) {
-			for (const w of list) {
-				if (w.ruleId === 'R9') {
-					continue; // 孤立はツリー表示に寄せ、Problems には出さない
-				}
-				const line = Math.max(0, w.line ?? 0);
-				const diag = new vscode.Diagnostic(
-					new vscode.Range(line, 0, line, Number.MAX_SAFE_INTEGER),
-					`${w.ruleId}: ${w.message}`,
-					severityOf(w),
-				);
-				diag.source = 'SkillMap';
-				diag.code = w.ruleId;
-				const arr = byFile.get(w.file) ?? [];
-				arr.push(diag);
-				byFile.set(w.file, arr);
-			}
-		}
-		for (const [file, diags] of byFile) {
-			collection.set(vscode.Uri.file(file), diags);
-		}
-	};
-
 	context.subscriptions.push(
 		vscode.commands.registerCommand('skillmap.refresh', () => rebuild()),
 		vscode.commands.registerCommand('skillmap.openFile', async (node?: MapNode) => {
 			if (!node?.filePath) {
 				return;
 			}
-			const target = node.kind === 'missing' ? node.parent?.filePath : node.filePath;
-			if (!target) {
+			if (node.kind === 'missing') {
+				// 参照切れ: 参照元を開く。Spec の欠落: Spec フォルダをエクスプローラーで示す
+				if (node.specUnit) {
+					await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(node.specUnit.dir));
+					return;
+				}
+				const parentPath = node.parent?.filePath;
+				if (!parentPath) {
+					return;
+				}
+				const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(parentPath));
+				const editor = await vscode.window.showTextDocument(doc, { preview: true });
+				const line = node.warnings.find((w) => w.line !== undefined)?.line;
+				if (line !== undefined) {
+					const pos = new vscode.Position(line, 0);
+					editor.selection = new vscode.Selection(pos, pos);
+					editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+				}
 				return;
 			}
-			const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(target));
+			const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(node.filePath));
 			const editor = await vscode.window.showTextDocument(doc, { preview: true });
-			const warnLine = node.warnings.find((w) => w.line !== undefined)?.line;
-			const line = node.kind === 'missing' ? warnLine : node.warnings.find((w) => w.file === node.filePath)?.line;
+			const line = node.warnings.find((w) => w.file === node.filePath)?.line;
 			if (line !== undefined) {
 				const pos = new vscode.Position(line, 0);
 				editor.selection = new vscode.Selection(pos, pos);
@@ -160,7 +276,16 @@ export function activate(context: vscode.ExtensionContext): void {
 			const uri = vscode.Uri.from({ scheme: TIP_SCHEME, path: `/tips/${ruleId}.md`, query: query.toString() });
 			const doc = await vscode.workspace.openTextDocument(uri);
 			await vscode.window.showTextDocument(doc, { preview: true });
-			// Markdown プレビューで開く（失敗したらソース表示のまま）
+			try {
+				await vscode.commands.executeCommand('markdown.showPreview', uri);
+			} catch {
+				// プレビューが使えない環境ではソース表示で代替
+			}
+		}),
+		vscode.commands.registerCommand('skillmap.showLoadMatrix', async () => {
+			const uri = vscode.Uri.from({ scheme: MATRIX_SCHEME, path: '/load-matrix.md' });
+			const doc = await vscode.workspace.openTextDocument(uri);
+			await vscode.window.showTextDocument(doc, { preview: true });
 			try {
 				await vscode.commands.executeCommand('markdown.showPreview', uri);
 			} catch {
@@ -169,15 +294,16 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 	);
 
-	// 経路合計のステータスバー表示
 	treeView.onDidChangeSelection((e) => {
 		const node = e.selection[0];
-		if (!node || !node.filePath || node.kind === 'skill' || node.kind === 'copy' || node.kind === 'orphanGroup') {
+		if (!node || !node.filePath || node.kind === 'section' || node.kind === 'skill' || node.kind === 'copy' || node.kind === 'orphanGroup' || node.kind === 'spec') {
 			statusBar.hide();
 			return;
 		}
 		const files = node.pathFiles();
-		if (files.length === 0) {
+		// 経路合計は SKILL.md 起点の場合のみ意味を持つため、Skills 配下でのみ表示する
+		const inSkills = files.some((n) => n.unit?.skillMdPath === n.filePath) || node.skill !== undefined;
+		if (!inSkills || files.length === 0) {
 			statusBar.hide();
 			return;
 		}
@@ -189,16 +315,26 @@ export function activate(context: vscode.ExtensionContext): void {
 		statusBar.show();
 	});
 
-	// 変更への追従
 	const skillWatcher = vscode.workspace.createFileSystemWatcher('**/SKILL.md');
 	skillWatcher.onDidCreate(scheduleRefresh);
 	skillWatcher.onDidDelete(scheduleRefresh);
 	skillWatcher.onDidChange(scheduleRefresh);
 	context.subscriptions.push(skillWatcher);
+	const contextWatcher = vscode.workspace.createFileSystemWatcher('**/{.kiro,.github}/**/*.md');
+	contextWatcher.onDidCreate(scheduleRefresh);
+	contextWatcher.onDidDelete(scheduleRefresh);
+	contextWatcher.onDidChange(scheduleRefresh);
+	context.subscriptions.push(contextWatcher);
 	context.subscriptions.push(
 		vscode.workspace.onDidSaveTextDocument((doc) => {
 			const p = doc.uri.fsPath;
-			if (p.endsWith('SKILL.md') || model.skills.some((s) => p.startsWith(s.canonical.dir) || s.copies.some((c) => p.startsWith(c.dir)))) {
+			const relevant =
+				p.endsWith('SKILL.md') ||
+				p.endsWith('AGENTS.md') ||
+				p.includes(`${path.sep}.kiro${path.sep}`) ||
+				p.includes(`${path.sep}.github${path.sep}`) ||
+				model.skills.some((s) => p.startsWith(s.canonical.dir) || s.copies.some((c) => p.startsWith(c.dir)));
+			if (relevant) {
 				scheduleRefresh();
 			}
 		}),
@@ -207,6 +343,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				scheduleRefresh();
 			}
 		}),
+		vscode.window.onDidChangeActiveTextEditor(() => updateSimulation()),
 	);
 
 	rebuild();

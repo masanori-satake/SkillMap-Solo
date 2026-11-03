@@ -1,12 +1,26 @@
-# Changelog
+# 変更履歴 (Change Log)
 
-## 0.1.0 (2026-11-03)
+"SkillMap-Solo" 拡張機能のすべての注目すべき変更はこのファイルに記録されます。
 
-初回リリース。
+## [1.0.0] - 2026-11-03
 
-- Agent Skills の参照関係ツリーを Explorer に表示（参照ベース、多階層・境界対応）
-- 推定トークン数の3層表示（ノード／経路合計／スキル全体・階層別内訳）
-- 警告ルール R1–R11（各ルールに Tips を同梱、ホバー要約＋Markdown 全文）
-- 正本（`.agents/`）と複製（`.kiro/` / `.github/`）のグルーピングとドリフト検出
-- `.kiro/steering`（inclusion: always）の常時ロード分の併記
-- settings.json によるしきい値・深刻度の調整
+### 追加 (Added)
+- **Kiro Steering の第一級表示**: `.kiro/steering/` を専用セクションに表示。inclusion（常時／条件／手動）をバッジ化し、常時ロード合計の推定トークンをセクションに集計
+- **Steering ルール S1–S3 / S5（Tips 付き）**: inclusion 未指定（S1）、実ファイルに一致しない fileMatchPattern（S2）、常時ロード合計の予算（S3、`skillmap.rules.steeringAlwaysTokenBudget` で設定）、正本（`.agents/steering`）との乖離（S5）
+- **Specs（β）**: `.kiro/specs/` の3点セット（requirements / design / tasks）をセクション表示。欠けは S4 として通知
+- **Copilot instructions の読み取り表示**: `.github/copilot-instructions.md`、`.github/instructions/*.instructions.md`（applyTo 表示）、`AGENTS.md` を専用セクションに表示
+- **ツール別ロードマトリクス**: コマンド「Show Load Matrix (per tool)」で、どのファイルが・どのツールで・いつ読まれるかを Markdown 一覧表示
+- **ロードシミュレーション（β）**: アクティブなファイルに対して Kiro / Copilot が読み込む推定トークンをステータスバーで対比表示（簡易 glob 評価）
+- **β機能の個別 ON/OFF 設定**: `skillmap.beta.specs` / `skillmap.beta.loadSimulation`（既定はいずれも ON）
+
+### 変更 (Changed)
+- **ツリーをセクション制に再構成**: Skills / Steering / Specs（β）/ Copilot instructions の4セクション構成へ
+- **体裁を Solo シリーズの共通の型に統一**: README の構成（英語→日本語・バッジ・目次アンカー）、CHANGELOG の書式、AGENTS.md のバージョン更新ルール、共通 scripts（check-version / update-version / check-readme-anchors）と ESLint・pre-commit を導入
+
+## [0.1.0] - 2026-11-03
+
+### 追加 (Added)
+- **Skills の関係ツリー**: SKILL.md を起点に、マークダウンリンクとパス記述から参照関係をたどり、エクスプローラーに木構造で表示（循環検出・参照切れ表示・未参照グループ・共有バッジ・境界バッジ）
+- **推定トークンの3層表示**: ノード単位（自ファイル＋配下合計）、ノード選択時の経路合計（ステータスバー）、ルートのスキル全体合計（重複排除）
+- **警告ルール R1–R11（Tips 付き）**: 本文の行数・トークン上限、description の長さと利用シーン、参照の深さ、循環、未参照、正本と複製のドリフト等。各警告に「なぜ問題か＋直し方」の Tips を同梱
+- **正本／複製モデル**: `.agents/` を正本として扱い、`.kiro/` / `.github/` 等への複製をグループ表示（ルールは正本のみ、複製はドリフトチェックのみ）

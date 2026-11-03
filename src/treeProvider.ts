@@ -1,38 +1,68 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { layerLabel, type LogicalSkill, type SkillUnit } from './skills.js';
+import { layerLabel, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
+import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
 
-export type NodeKind = 'skill' | 'file' | 'missing' | 'cycle' | 'orphanGroup' | 'orphan' | 'copy';
+export type NodeKind =
+	| 'section'
+	| 'skill'
+	| 'file'
+	| 'missing'
+	| 'cycle'
+	| 'orphanGroup'
+	| 'orphan'
+	| 'copy'
+	| 'steering'
+	| 'spec'
+	| 'copilot';
+
+export type SectionId = 'skills' | 'steering' | 'specs' | 'copilot';
 
 export class MapNode {
 	kind: NodeKind;
-	skill: LogicalSkill;
-	unit: SkillUnit;
+	sectionId?: SectionId;
+	skill?: LogicalSkill;
+	unit?: SkillUnit;
+	graph?: FileGraph;
+	steeringUnit?: SteeringUnit;
+	specUnit?: SpecUnit;
+	copilotUnit?: CopilotUnit;
 	filePath?: string;
 	parent?: MapNode;
 	children?: MapNode[];
 	warnings: SkillWarning[] = [];
-	/** 境界ノードか */
 	boundary = false;
-	/** 共有ファイル（複数の親から参照）か */
 	shared = false;
+	labelOverride?: string;
 
-	constructor(kind: NodeKind, skill: LogicalSkill, unit: SkillUnit) {
+	constructor(kind: NodeKind) {
 		this.kind = kind;
-		this.skill = skill;
-		this.unit = unit;
 	}
 
 	get ownTokens(): number {
+		if (this.kind === 'steering' && this.steeringUnit) {
+			return this.steeringUnit.tokens;
+		}
+		if (this.kind === 'copilot' && this.copilotUnit) {
+			return this.copilotUnit.tokens;
+		}
+		if (this.kind === 'spec' && this.specUnit) {
+			return this.specUnit.totalTokens;
+		}
 		if (!this.filePath) {
 			return 0;
 		}
-		return this.unit.files.get(this.filePath)?.tokens ?? 0;
+		if (this.graph) {
+			return this.graph.files.get(this.filePath)?.tokens ?? 0;
+		}
+		if (this.unit) {
+			return this.unit.files.get(this.filePath)?.tokens ?? 0;
+		}
+		return 0;
 	}
 
-	/** 配下合計（同一ファイルは1回だけ数える） */
 	subtreeTokens(seen: Set<string> = new Set()): number {
 		let total = 0;
 		if (this.filePath && !seen.has(this.filePath)) {
@@ -45,7 +75,6 @@ export class MapNode {
 		return total;
 	}
 
-	/** ルート（SKILL.md）からこのノードまでの経路上のファイル一覧 */
 	pathFiles(): MapNode[] {
 		const chain: MapNode[] = [];
 		let current: MapNode | undefined = this;
@@ -73,29 +102,26 @@ export class MapNode {
 
 export class SkillMapModel {
 	skills: LogicalSkill[] = [];
-	warnings = new Map<string, SkillWarning[]>();
+	skillWarnings = new Map<string, SkillWarning[]>();
+	steering: SteeringUnit[] = [];
+	steeringWarnings: SkillWarning[] = [];
+	specs: SpecUnit[] = [];
+	specWarnings: SkillWarning[] = [];
+	copilot: CopilotUnit[] = [];
+	betaSpecs = true;
 
-	setData(skills: LogicalSkill[], warnings: Map<string, SkillWarning[]>): void {
-		this.skills = skills;
-		this.warnings = warnings;
+	get steeringDir(): string | undefined {
+		return this.steering[0] ? path.dirname(this.steering[0].filePath) : undefined;
+	}
+
+	alwaysSteeringTokens(): number {
+		return this.steering
+			.filter((s) => s.inclusion === 'always')
+			.reduce((sum, s) => sum + s.tokens, 0);
 	}
 }
 
 function countReferences(unit: SkillUnit): Map<string, number> {
-	const counts = new Map<string, number>();
-	for (const info of unit.files.values()) {
-		const parents = new Set<string>();
-		for (const edge of info.refs) {
-			if (edge.exists && !edge.isDirectory) {
-				parents.add(info.absPath + '->' + edge.target);
-			}
-		}
-		for (const key of parents) {
-			const target = key.split('->')[1];
-			counts.set(target, (counts.get(target) ?? 0) + 1);
-		}
-	}
-	// 親ファイル単位で数え直す（同一親からの重複参照は1つとみなす）
 	const perParent = new Map<string, Set<string>>();
 	for (const info of unit.files.values()) {
 		for (const edge of info.refs) {
@@ -113,6 +139,13 @@ function countReferences(unit: SkillUnit): Map<string, number> {
 	return result;
 }
 
+const SECTION_LABELS: Record<SectionId, string> = {
+	skills: 'Skills',
+	steering: 'Steering (.kiro/steering)',
+	specs: 'Specs（β）',
+	copilot: 'Copilot instructions',
+};
+
 export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	private _onDidChangeTreeData = new vscode.EventEmitter<MapNode | undefined | void>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -129,17 +162,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		item.iconPath = this.iconFor(node);
 		item.contextValue = this.contextFor(node);
 		item.tooltip = this.tooltipFor(node);
-		if (node.filePath && (node.kind === 'file' || node.kind === 'orphan' || node.kind === 'cycle')) {
+		if (node.filePath && node.kind !== 'section') {
 			item.command = {
 				command: 'skillmap.openFile',
 				title: 'ファイルを開く',
-				arguments: [node],
-			};
-		}
-		if (node.kind === 'missing') {
-			item.command = {
-				command: 'skillmap.openFile',
-				title: '参照元のファイルを開く',
 				arguments: [node],
 			};
 		}
@@ -148,7 +174,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 
 	getChildren(node?: MapNode): MapNode[] {
 		if (!node) {
-			return this.model.skills.map((skill) => this.buildSkillRoot(skill));
+			return this.buildSections();
 		}
 		return node.children ?? [];
 	}
@@ -157,19 +183,56 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		return node.parent;
 	}
 
-	// ---- ノード構築 ----
+	// ---- セクション ----
+
+	private buildSections(): MapNode[] {
+		const sections: MapNode[] = [];
+		const make = (id: SectionId, children: MapNode[], warnings: SkillWarning[] = []): MapNode => {
+			const section = new MapNode('section');
+			section.sectionId = id;
+			section.children = children;
+			section.warnings = warnings;
+			for (const child of children) {
+				child.parent = section;
+			}
+			return section;
+		};
+		if (this.model.skills.length > 0) {
+			sections.push(make('skills', this.model.skills.map((s) => this.buildSkillRoot(s))));
+		}
+		if (this.model.steering.length > 0) {
+			const dir = this.model.steeringDir;
+			const sectionWarnings = this.model.steeringWarnings.filter((w) => w.file === dir);
+			sections.push(make('steering', this.model.steering.map((s) => this.buildSteeringNode(s)), sectionWarnings));
+		}
+		if (this.model.betaSpecs && this.model.specs.length > 0) {
+			sections.push(make('specs', this.model.specs.map((s) => this.buildSpecNode(s))));
+		}
+		if (this.model.copilot.length > 0) {
+			sections.push(make('copilot', this.model.copilot.map((c) => this.buildCopilotNode(c))));
+		}
+		return sections;
+	}
+
+	// ---- Skills ----
 
 	private buildSkillRoot(skill: LogicalSkill): MapNode {
-		const root = new MapNode('skill', skill, skill.canonical);
-		const warnings = this.model.warnings.get(skill.key) ?? [];
-		root.warnings = warnings.filter((w) => w.file === skill.canonical.skillMdPath && (w.ruleId === 'R10'));
+		const root = new MapNode('skill');
+		root.skill = skill;
+		root.unit = skill.canonical;
+		const warnings = this.model.skillWarnings.get(skill.key) ?? [];
+		root.warnings = warnings.filter((w) => w.file === skill.canonical.skillMdPath && w.ruleId === 'R10');
 		const children: MapNode[] = [];
 		children.push(this.buildFileNode(skill, skill.canonical, skill.canonical.skillMdPath, root, []));
 		if (skill.canonical.orphans.length > 0) {
-			const group = new MapNode('orphanGroup', skill, skill.canonical);
+			const group = new MapNode('orphanGroup');
+			group.skill = skill;
+			group.unit = skill.canonical;
 			group.parent = root;
 			group.children = skill.canonical.orphans.map((orphanPath) => {
-				const orphan = new MapNode('orphan', skill, skill.canonical);
+				const orphan = new MapNode('orphan');
+				orphan.skill = skill;
+				orphan.unit = skill.canonical;
 				orphan.filePath = orphanPath;
 				orphan.parent = group;
 				orphan.warnings = warnings.filter((w) => w.file === orphanPath);
@@ -178,7 +241,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			children.push(group);
 		}
 		for (const copy of skill.copies) {
-			const copyNode = new MapNode('copy', skill, copy);
+			const copyNode = new MapNode('copy');
+			copyNode.skill = skill;
+			copyNode.unit = copy;
 			copyNode.parent = root;
 			copyNode.warnings = warnings.filter((w) => w.copyDir === copy.dir);
 			copyNode.children = [this.buildFileNode(skill, copy, copy.skillMdPath, copyNode, [])];
@@ -196,14 +261,16 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		ancestorChain: string[],
 	): MapNode {
 		const info = unit.files.get(filePath);
-		const node = new MapNode('file', skill, unit);
+		const node = new MapNode('file');
+		node.skill = skill;
+		node.unit = unit;
 		node.filePath = filePath;
 		node.parent = parent;
 		node.boundary = info?.boundary ?? false;
 		const refCounts = countReferences(unit);
 		node.shared = (refCounts.get(filePath) ?? 0) > 1 && filePath !== unit.skillMdPath;
 		if (unit === skill.canonical) {
-			const warnings = this.model.warnings.get(skill.key) ?? [];
+			const warnings = this.model.skillWarnings.get(skill.key) ?? [];
 			node.warnings = warnings.filter((w) => w.file === filePath && w.copyDir === undefined);
 		}
 		const chain = [...ancestorChain, filePath];
@@ -211,7 +278,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (info && !info.isDirectory) {
 			for (const edge of info.refs) {
 				if (edge.isDirectory) {
-					const dirNode = new MapNode('file', skill, unit);
+					const dirNode = new MapNode('file');
+					dirNode.skill = skill;
+					dirNode.unit = unit;
 					dirNode.filePath = edge.target;
 					dirNode.parent = node;
 					dirNode.boundary = unit.files.get(edge.target)?.boundary ?? false;
@@ -219,22 +288,26 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					continue;
 				}
 				if (!edge.exists) {
-					const missing = new MapNode('missing', skill, unit);
+					const missing = new MapNode('missing');
+					missing.skill = skill;
+					missing.unit = unit;
 					missing.filePath = edge.target;
 					missing.parent = node;
 					if (unit === skill.canonical) {
-						const warnings = this.model.warnings.get(skill.key) ?? [];
+						const warnings = this.model.skillWarnings.get(skill.key) ?? [];
 						missing.warnings = warnings.filter((w) => w.ruleId === 'R7' && w.file === filePath && w.line === edge.line);
 					}
 					children.push(missing);
 					continue;
 				}
 				if (chain.includes(edge.target)) {
-					const cycle = new MapNode('cycle', skill, unit);
+					const cycle = new MapNode('cycle');
+					cycle.skill = skill;
+					cycle.unit = unit;
 					cycle.filePath = edge.target;
 					cycle.parent = node;
 					if (unit === skill.canonical) {
-						const warnings = this.model.warnings.get(skill.key) ?? [];
+						const warnings = this.model.skillWarnings.get(skill.key) ?? [];
 						cycle.warnings = warnings.filter((w) => w.ruleId === 'R8' && w.file === filePath && w.line === edge.line);
 					}
 					children.push(cycle);
@@ -247,18 +320,110 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		return node;
 	}
 
+	// ---- Steering / Specs / Copilot ----
+
+	private buildSteeringNode(unit: SteeringUnit): MapNode {
+		const node = new MapNode('steering');
+		node.steeringUnit = unit;
+		node.filePath = unit.filePath;
+		node.warnings = this.model.steeringWarnings.filter((w) => w.file === unit.filePath);
+		node.children = this.buildGraphChildren(unit.graph, unit.filePath, node, [unit.filePath]);
+		return node;
+	}
+
+	private buildGraphChildren(graph: FileGraph, filePath: string, parent: MapNode, chain: string[]): MapNode[] {
+		const info = graph.files.get(filePath);
+		const children: MapNode[] = [];
+		if (!info || info.isDirectory) {
+			return children;
+		}
+		for (const edge of info.refs) {
+			if (edge.isDirectory) {
+				continue;
+			}
+			if (!edge.exists) {
+				const missing = new MapNode('missing');
+				missing.graph = graph;
+				missing.filePath = edge.target;
+				missing.parent = parent;
+				children.push(missing);
+				continue;
+			}
+			if (chain.includes(edge.target)) {
+				const cycle = new MapNode('cycle');
+				cycle.graph = graph;
+				cycle.filePath = edge.target;
+				cycle.parent = parent;
+				children.push(cycle);
+				continue;
+			}
+			const child = new MapNode('file');
+			child.graph = graph;
+			child.filePath = edge.target;
+			child.parent = parent;
+			child.boundary = graph.files.get(edge.target)?.boundary ?? false;
+			child.children = this.buildGraphChildren(graph, edge.target, child, [...chain, edge.target]);
+			children.push(child);
+		}
+		return children;
+	}
+
+	private buildSpecNode(unit: SpecUnit): MapNode {
+		const node = new MapNode('spec');
+		node.specUnit = unit;
+		node.warnings = this.model.specWarnings.filter((w) => w.file === unit.dir);
+		node.children = unit.files.map((f) => {
+			if (!f.present) {
+				const missing = new MapNode('missing');
+				missing.specUnit = unit;
+				missing.filePath = f.filePath;
+				missing.labelOverride = `${f.fileName}（欠落）`;
+				missing.parent = node;
+				missing.warnings = this.model.specWarnings.filter((w) => w.file === unit.dir && w.message.includes(f.fileName));
+				return missing;
+			}
+			const child = new MapNode('file');
+			child.specUnit = unit;
+			child.graph = f.graph;
+			child.filePath = f.filePath;
+			child.parent = node;
+			child.children = f.graph ? this.buildGraphChildren(f.graph, f.filePath, child, [f.filePath]) : [];
+			return child;
+		});
+		return node;
+	}
+
+	private buildCopilotNode(unit: CopilotUnit): MapNode {
+		const node = new MapNode('copilot');
+		node.copilotUnit = unit;
+		node.filePath = unit.filePath;
+		node.children = [];
+		return node;
+	}
+
 	// ---- 表示 ----
 
 	private labelFor(node: MapNode): string {
+		if (node.labelOverride) {
+			return node.labelOverride;
+		}
 		switch (node.kind) {
+			case 'section':
+				return SECTION_LABELS[node.sectionId ?? 'skills'];
 			case 'skill':
-				return node.skill.name;
+				return node.skill?.name ?? '';
 			case 'orphanGroup':
 				return '未参照ファイル';
 			case 'copy': {
-				const rel = copyRootLabel(node.unit.dir);
+				const rel = copyRootLabel(node.unit?.dir ?? '');
 				return `複製（${rel}）`;
 			}
+			case 'steering':
+				return path.basename(node.filePath ?? '');
+			case 'spec':
+				return node.specUnit?.name ?? '';
+			case 'copilot':
+				return node.copilotUnit?.name ?? '';
 			case 'missing':
 				return `${path.basename(node.filePath ?? '')} （参照切れ）`;
 			case 'cycle':
@@ -269,28 +434,56 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	}
 
 	private descriptionFor(node: MapNode): string | undefined {
-		const warnCount = node.kind === 'skill' || node.kind === 'copy'
-			? node.allWarnings().length
-			: node.warnings.length;
-		const warn = warnCount > 0 ? ` ⚠${warnCount}` : '';
+		const warn = (n: number) => (n > 0 ? ` ⚠${n}` : '');
 		switch (node.kind) {
+			case 'section': {
+				if (node.sectionId === 'steering') {
+					const always = this.model.alwaysSteeringTokens();
+					return `常時ロード合計 ≈${always.toLocaleString()} tok${warn(node.allWarnings().length)}`;
+				}
+				if (node.sectionId === 'skills') {
+					return `${this.model.skills.length}件${warn(node.allWarnings().length)}`;
+				}
+				if (node.sectionId === 'specs') {
+					return `${this.model.specs.length}件${warn(node.allWarnings().length)}`;
+				}
+				if (node.sectionId === 'copilot') {
+					const total = this.model.copilot.reduce((s, c) => s + c.tokens, 0);
+					return `≈${total.toLocaleString()} tok`;
+				}
+				return undefined;
+			}
 			case 'skill': {
-				const total = totalOwnedTokens(node.skill.canonical);
-				return `合計 ≈${total.toLocaleString()} tok${warn}`;
+				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
+				return `合計 ≈${total.toLocaleString()} tok${warn(node.allWarnings().length)}`;
 			}
 			case 'copy':
-				return node.warnings.length > 0 ? `正本と乖離${warn}` : '正本と一致';
+				return node.warnings.length > 0 ? `正本と乖離${warn(node.warnings.length)}` : '正本と一致';
 			case 'orphanGroup':
 				return `${node.children?.length ?? 0}件`;
+			case 'steering': {
+				const u = node.steeringUnit!;
+				const badge = u.inclusion === 'always' ? '常時' : u.inclusion === 'fileMatch' ? '条件' : '手動';
+				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(node.warnings.length)}`;
+			}
+			case 'spec': {
+				const missing = node.specUnit?.files.filter((f) => !f.present).length ?? 0;
+				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? ` · 欠落${missing}` : ''}${warn(node.warnings.length)}`;
+			}
+			case 'copilot': {
+				const u = node.copilotUnit!;
+				const mode = u.mode === 'always' ? '常時' : `applyTo: ${u.applyTo ?? '(未指定)'}`;
+				return `${mode} · ≈${u.tokens.toLocaleString()} tok`;
+			}
 			case 'missing':
-				return '存在しません';
+				return node.specUnit ? '未作成' : '存在しません';
 			case 'file':
 			case 'orphan':
 			case 'cycle': {
 				const parts: string[] = [];
 				parts.push(`≈${node.ownTokens.toLocaleString()} tok`);
-				const depth = node.unit.depthDisplay.get(node.filePath ?? '');
-				if (depth !== undefined && node.filePath !== node.unit.skillMdPath) {
+				const depth = node.unit?.depthDisplay.get(node.filePath ?? '') ?? node.graph?.depthDisplay.get(node.filePath ?? '');
+				if (depth !== undefined && node.unit && node.filePath !== node.unit.skillMdPath) {
 					parts.push(layerLabel(depth));
 				}
 				if (node.shared) {
@@ -299,20 +492,37 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				if (node.boundary) {
 					parts.push('境界');
 				}
-				return parts.join(' · ') + warn;
+				return parts.join(' · ') + warn(node.warnings.length);
 			}
 		}
 		return undefined;
 	}
 
 	private iconFor(node: MapNode): vscode.ThemeIcon {
-		const hasError = node.warnings.some((w) => w.severity === 'error')
-			|| (node.kind === 'skill' && node.allWarnings().some((w) => w.severity === 'error'));
 		switch (node.kind) {
+			case 'section':
+				return new vscode.ThemeIcon(
+					node.sectionId === 'skills'
+						? 'library'
+						: node.sectionId === 'steering'
+							? 'compass'
+							: node.sectionId === 'specs'
+								? 'checklist'
+								: 'hubot',
+				);
 			case 'skill':
-				return new vscode.ThemeIcon(hasError ? 'library' : 'library');
+				return new vscode.ThemeIcon('library');
 			case 'copy':
 				return new vscode.ThemeIcon('files');
+			case 'steering':
+				return new vscode.ThemeIcon(
+					node.warnings.length > 0 ? 'warning' : 'file',
+					node.warnings.length > 0 ? new vscode.ThemeColor('editorWarning.foreground') : undefined,
+				);
+			case 'spec':
+				return new vscode.ThemeIcon('notebook');
+			case 'copilot':
+				return new vscode.ThemeIcon('file');
 			case 'orphanGroup':
 				return new vscode.ThemeIcon('archive');
 			case 'missing':
@@ -341,8 +551,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	}
 
 	private collapsibleStateFor(node: MapNode): vscode.TreeItemCollapsibleState {
-		if (node.kind === 'skill' || node.kind === 'copy' || node.kind === 'orphanGroup') {
-			return vscode.TreeItemCollapsibleState.Collapsed;
+		if (node.kind === 'section') {
+			return node.sectionId === 'skills'
+				? vscode.TreeItemCollapsibleState.Expanded
+				: vscode.TreeItemCollapsibleState.Collapsed;
 		}
 		if (node.children && node.children.length > 0) {
 			return vscode.TreeItemCollapsibleState.Collapsed;
@@ -354,7 +566,25 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		const md = new vscode.MarkdownString();
 		md.isTrusted = true;
 		md.supportHtml = false;
-		if (node.kind === 'skill') {
+		if (node.kind === 'section') {
+			if (node.sectionId === 'steering') {
+				md.appendMarkdown('**Steering (.kiro/steering)**\n\n');
+				md.appendMarkdown(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`);
+				md.appendMarkdown('- Kiro が inclusion 設定に従って自動で読み込むファイルです。Copilot は読みません\n');
+			} else if (node.sectionId === 'copilot') {
+				md.appendMarkdown('**Copilot instructions**\n\n');
+				md.appendMarkdown('- GitHub Copilot が読み込む指示ファイルです（表示専用。ルール適用はしません）\n');
+				md.appendMarkdown('- Kiro は読みません\n');
+			} else if (node.sectionId === 'specs') {
+				md.appendMarkdown('**Specs（β）**\n\n');
+				md.appendMarkdown('- .kiro/specs 配下の仕様駆動開発の3点セットです\n');
+			} else {
+				md.appendMarkdown('**Skills**\n');
+			}
+			this.appendWarnings(md, node.warnings);
+			return md;
+		}
+		if (node.kind === 'skill' && node.skill) {
 			const unit = node.skill.canonical;
 			const total = totalOwnedTokens(unit);
 			md.appendMarkdown(`**${node.skill.name}**\n\n`);
@@ -365,22 +595,52 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				md.appendMarkdown(`- うち .kiro/steering の常時ロード分（inclusion: always）: ≈${unit.steeringAlwaysTokens.toLocaleString()} tok\n`);
 			}
 			if (!node.skill.canonicalExplicit && node.skill.copies.length > 0) {
-				md.appendMarkdown(`- 正本の自動判定: canonicalRoots に一致する配置が無いため、先頭の配置を代表としています\n`);
+				md.appendMarkdown('- 正本の自動判定: canonicalRoots に一致する配置が無いため、先頭の配置を代表としています\n');
 			}
 			this.appendWarnings(md, node.allWarnings().filter((w) => w.copyDir === undefined).slice(0, 10));
 			return md;
 		}
 		if (node.kind === 'copy') {
-			md.appendMarkdown(`**複製**: ${node.unit.dir}\n\n`);
+			md.appendMarkdown(`**複製**: ${node.unit?.dir ?? ''}\n\n`);
 			md.appendMarkdown('警告ルールは正本にのみ適用されます。複製にはドリフトチェック（R11）のみが適用されます。\n');
 			this.appendWarnings(md, node.warnings);
+			return md;
+		}
+		if (node.kind === 'steering' && node.steeringUnit) {
+			const u = node.steeringUnit;
+			md.appendMarkdown(`**${u.filePath}**\n\n`);
+			md.appendMarkdown(`- inclusion: ${u.inclusion}${u.inclusionExplicit ? '' : '（未指定＝常時扱い）'}\n`);
+			if (u.fileMatchPattern) {
+				md.appendMarkdown(`- fileMatchPattern: \`${u.fileMatchPattern}\`\n`);
+			}
+			md.appendMarkdown(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`);
+			md.appendMarkdown('- Kiro: inclusion に従って自動ロード ／ Copilot: 読まれない\n');
+			if (u.canonicalCounterpart) {
+				md.appendMarkdown(`- 正本: ${u.canonicalCounterpart}\n`);
+			}
+			this.appendWarnings(md, node.warnings);
+			return md;
+		}
+		if (node.kind === 'spec' && node.specUnit) {
+			md.appendMarkdown(`**Spec: ${node.specUnit.name}**\n\n`);
+			for (const f of node.specUnit.files) {
+				md.appendMarkdown(`- ${f.fileName}: ${f.present ? `≈${f.tokens.toLocaleString()} tok` : '欠落'}\n`);
+			}
+			this.appendWarnings(md, node.warnings);
+			return md;
+		}
+		if (node.kind === 'copilot' && node.copilotUnit) {
+			const u = node.copilotUnit;
+			md.appendMarkdown(`**${u.filePath}**\n\n`);
+			md.appendMarkdown(`- 読み込み: ${u.mode === 'always' ? '常時（Copilot）' : `applyTo: ${u.applyTo ?? '(未指定)'}`}\n`);
+			md.appendMarkdown(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`);
+			md.appendMarkdown('- Copilot: 読み込む ／ Kiro: 読まれない\n');
 			return md;
 		}
 		if (node.kind === 'orphanGroup') {
 			md.appendMarkdown('スキル内に存在しますが、どこからも参照されていないファイルです。\n');
 			return md;
 		}
-		// ファイル系ノード
 		md.appendMarkdown(`**${node.filePath}**\n\n`);
 		const own = node.ownTokens;
 		const subtree = node.subtreeTokens();
@@ -390,13 +650,13 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			md.appendMarkdown(`- 配下合計（重複排除）: ≈${subtree.toLocaleString()} tok\n`);
 		}
 		if (pathFiles.length > 1) {
-			md.appendMarkdown(`- 経路合計（SKILL.mdから）: ≈${node.pathTokens().toLocaleString()} tok（${pathFiles.length}ファイル）\n`);
+			md.appendMarkdown(`- 経路合計: ≈${node.pathTokens().toLocaleString()} tok（${pathFiles.length}ファイル）\n`);
 		}
 		if (node.shared) {
 			md.appendMarkdown('- 共有: 複数のファイルから参照されています\n');
 		}
 		if (node.boundary) {
-			md.appendMarkdown('- 境界: スキルディレクトリの外のファイルです。表示と構造チェックのみ対象です\n');
+			md.appendMarkdown('- 境界: 配置ディレクトリの外のファイルです。表示と構造チェックのみ対象です\n');
 		}
 		this.appendWarnings(md, node.warnings);
 		return md;
