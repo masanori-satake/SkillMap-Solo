@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildUnit, findSkillDirs, groupSkills, rootLabels, scopeRootFor } from '../skills.js';
+import { buildUnit, extractReferences, findSkillDirs, groupSkills, rootLabels, scopeRootFor } from '../skills.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
@@ -209,4 +209,54 @@ description: ファイルを変換するツール。
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	assert.ok(warnings.some((w) => w.ruleId === 'R3'));
 	assert.ok(!warnings.some((w) => w.severity === 'error'));
+});
+
+test('未解決参照の段階化: リンク/パス付きはR7、ファイル名のみの言及はR13', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/mentions/SKILL.md',
+		`---
+name: mentions
+description: 言及の段階化テスト用。テストを実行するときに使う。
+---
+
+# Mentions
+
+[link-path](references/gone.md)
+[link-bare](bare-link.md)
+\`references/span-path.md\` はまだ無い。
+作成予定は \`planned.md\` を参照。
+\`planned.md\` は後で作る。
+式 \`targets[i].name\` と記法 \`*.md\` はファイルではない。
+日本語名 \`要件定義.md\` も候補になる。
+`,
+	);
+	const unit = buildUnit(path.join(root, 'skills/mentions'));
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	const byRule = (id: string) => warnings.filter((w) => w.ruleId === id);
+	assert.equal(byRule('R7').length, 3, 'リンク2件＋パス付きコードスパン1件が参照切れ');
+	assert.ok(byRule('R7').every((w) => w.severity === 'warn'), 'R7 は warn に緩和');
+	assert.equal(byRule('R13').length, 2, 'planned.md と 要件定義.md が要確認の言及');
+	assert.ok(byRule('R13').every((w) => w.severity === 'info'), 'R13 は info');
+
+	// 重複言及は1エッジに集約され、出現行が保持される
+	const skillInfo = unit.files.get(unit.skillMdPath);
+	const planned = skillInfo?.refs.find((e) => e.raw === 'planned.md');
+	assert.ok(planned, 'planned.md のエッジがある');
+	assert.equal(planned.lines.length, 2, '2行分の言及が集約される');
+	assert.equal(planned.via, 'code');
+	const linkBare = skillInfo?.refs.find((e) => e.raw === 'bare-link.md');
+	assert.equal(linkBare?.via, 'link');
+	assert.ok(!skillInfo?.refs.some((e) => e.raw.includes('targets')), '式は候補にしない');
+});
+
+test('抽出: 同じ行のリンクとコードスパンはリンクとして格上げされる', () => {
+	const root = tmpRoot();
+	const from = path.join(root, 'a.md');
+	const edges = extractReferences(from, '`shared.md` と [link](shared.md) が同じ行\n\n`shared.md` が別の行\n');
+	assert.equal(edges.length, 1, '同一参照先は1エッジ');
+	assert.equal(edges[0].via, 'link');
+	assert.deepEqual(edges[0].lines, [0, 2]);
 });

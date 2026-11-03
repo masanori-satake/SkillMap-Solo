@@ -7,14 +7,27 @@ import { estimateTokens } from './tokens.js';
 export interface RefEdge {
 	/** 参照の原文（リンク先表記） */
 	raw: string;
-	/** 参照が現れた行（0始まり） */
+	/** 参照が最初に現れた行（0始まり）。代表行として警告の突合に使う */
 	line: number;
+	/** 参照が現れた全ての行（0始まり）。同一ファイル内の重複は1エッジに集約する */
+	lines: number[];
+	/** 抽出元: リンク記法かコードスパンか（参照意図の明示度の判定に使う） */
+	via: 'link' | 'code';
 	/** 解決された絶対パス。ファイルが存在しない場合はその候補パスを返す */
 	target: string;
 	/** 解決先が存在するか */
 	exists: boolean;
 	/** 解決先がディレクトリか */
 	isDirectory: boolean;
+}
+
+/**
+ * 未解決の参照候補が「ファイル名のみの言及」かを判定する。
+ * コードスパンに書かれたパスなしの名前は、参照の意図とは限らず（構造の説明・
+ * 作成予定の名前など）、参照切れと断定できないため R13（要確認）として扱う。
+ */
+export function isTentativeMention(edge: RefEdge): boolean {
+	return edge.via === 'code' && !edge.raw.includes('/');
 }
 
 export interface FileInfo {
@@ -132,13 +145,17 @@ export function findSkillDirs(workspaceRoots: string[], extraRoots: string[]): s
 
 const LINK_RE = /\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const CODE_SPAN_RE = /`([^`\n]+)`/g;
-const PATH_LIKE_RE = /^[\w.@~+%-]+(\/[\w.@~+%-]+)+(\.\w+)?$|^[^\s/]+\.\w{1,10}$/;
+// ファイル名のみの候補は、構文記号（括弧・引用符・演算子・グロブ等）を含むものを
+// 除外文字方式で弾く。`targets[i].name` のような式をファイル名と誤認しないため。
+// ASCII の \w に狭めると日本語ファイル名が落ちるため、除外方式にしている。
+const PATH_LIKE_RE =
+	/^[\w.@~+%-]+(\/[\w.@~+%-]+)+(\.\w+)?$|^[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+(\.[^\s\/.\[\](){}<>"'|=;:,!?*#$&\\]{1,10})$/;
 
 export function extractReferences(fromFile: string, text: string): RefEdge[] {
 	const edges: RefEdge[] = [];
-	const seen = new Set<string>();
+	const byTarget = new Map<string, RefEdge>();
 	const fromDir = path.dirname(fromFile);
-	const push = (raw: string, line: number) => {
+	const push = (raw: string, line: number, via: 'link' | 'code') => {
 		const cleaned = raw.replace(/^<|>$/g, '').split('#')[0].trim();
 		if (!cleaned || cleaned.includes('://') || cleaned.startsWith('mailto:') || cleaned.startsWith('/')) {
 			return;
@@ -147,11 +164,18 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 		if (target === fromFile) {
 			return;
 		}
-		const key = `${line}:${target}`;
-		if (seen.has(key)) {
+		// 同一ファイル内で同じ参照先が複数回現れても1エッジに集約し、出現行を全て保持する
+		const existing = byTarget.get(target);
+		if (existing) {
+			if (!existing.lines.includes(line)) {
+				existing.lines.push(line);
+			}
+			// リンク記法で書かれた箇所が1つでもあれば、参照の意図は明示的として格上げする
+			if (via === 'link') {
+				existing.via = 'link';
+			}
 			return;
 		}
-		seen.add(key);
 		let exists = false;
 		let isDirectory = false;
 		try {
@@ -161,7 +185,9 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 		} catch {
 			exists = false;
 		}
-		edges.push({ raw: cleaned, line, target, exists, isDirectory });
+		const edge: RefEdge = { raw: cleaned, line, lines: [line], via, target, exists, isDirectory };
+		byTarget.set(target, edge);
+		edges.push(edge);
 	};
 	const lines = text.split(/\r?\n/);
 	for (let i = 0; i < lines.length; i++) {
@@ -169,13 +195,13 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 		let m: RegExpExecArray | null;
 		LINK_RE.lastIndex = 0;
 		while ((m = LINK_RE.exec(lineText)) !== null) {
-			push(m[2], i);
+			push(m[2], i, 'link');
 		}
 		CODE_SPAN_RE.lastIndex = 0;
 		while ((m = CODE_SPAN_RE.exec(lineText)) !== null) {
 			const candidate = m[1].trim();
-			if (PATH_LIKE_RE.test(candidate) && !candidate.includes(' ')) {
-				push(candidate, i);
+			if (PATH_LIKE_RE.test(candidate)) {
+				push(candidate, i, 'code');
 			}
 		}
 	}

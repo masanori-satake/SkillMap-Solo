@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import type { LogicalSkill, SkillUnit } from './skills.js';
+import { isTentativeMention, type LogicalSkill, type SkillUnit } from './skills.js';
 import { L } from './i18n.js';
 
 export type Severity = 'error' | 'warn' | 'info';
@@ -132,6 +132,20 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 			fix: {
 				ja: 'ファイルの移動・改名に合わせて参照を直すか、不要になった参照を消してください。',
 				en: 'Update the reference when files move or are renamed, or delete references that are no longer needed.',
+			},
+		},
+	},
+	R13: {
+		id: 'R13',
+		title: { ja: '要確認の言及', en: 'Mention to check' },
+		tip: {
+			principle: {
+				ja: 'ファイル名だけの言及は、参照のつもりで書かれたとは限りません。構造の説明や、これから作るファイルの名前であることも多いものです。',
+				en: 'A bare file name in the text is not necessarily meant as a reference — it may just describe structure, or name a file yet to be created.',
+			},
+			fix: {
+				ja: '参照を意図している場合には、確認が必要です。ファイルを作成するか、表記（タイプミス等）を見直してください。説明や予定の名前であれば、そのままで問題ありません。',
+				en: 'If a reference was intended, it needs a check — create the file or review the spelling. If it is a description or a planned name, no action is needed.',
 			},
 		},
 	},
@@ -500,10 +514,18 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 	}
 
 	// R7: 参照切れ（境界の先の構造チェック含む）
+	// リンク記法・パス付きの表記は参照の意図が明示的と考え、存在しなければ警告する。
+	// R13: コードスパンのファイル名のみの言及は参照の意図と断定できないため、
+	// 「参照切れ」とはせず、意図と合っているかの確認を促す注記（info）にする。
 	for (const [from, info] of unit.files) {
 		for (const edge of info.refs) {
-			if (!edge.exists) {
-				push({ ruleId: 'R7', severity: 'error', message: L(`参照先が存在しません: ${edge.raw}`, `Reference target does not exist: ${edge.raw}`), file: from, line: edge.line });
+			if (edge.exists) {
+				continue;
+			}
+			if (isTentativeMention(edge)) {
+				push({ ruleId: 'R13', severity: 'info', message: L(`同名のファイルが見つかりません: ${edge.raw}`, `No file with this name was found: ${edge.raw}`), file: from, line: edge.line });
+			} else {
+				push({ ruleId: 'R7', severity: 'warn', message: L(`参照先が存在しません: ${edge.raw}`, `Reference target does not exist: ${edge.raw}`), file: from, line: edge.line });
 			}
 		}
 	}
