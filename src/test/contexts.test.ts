@@ -84,6 +84,26 @@ test('Copilot 発見とロードシミュレーションが機能する', () => 
 	assert.equal(sim2.copilot.length, 2, 'applyTo 不一致の instructions は含まれない');
 });
 
+test('Kiro の予約 Steering (product/structure/tech) には S1 を出さない', () => {
+	const root = tmpRoot();
+	setupWorkspace(root);
+	write(root, '.kiro/steering/product.md', '# Product\n\nプロダクト概要。\n');
+	write(root, '.kiro/steering/structure.md', '# Structure\n\n構成。\n');
+	write(root, '.kiro/steering/tech.md', '# Tech\n\n技術。\n');
+	write(root, '.kiro/steering/custom-notes.md', '# Notes\n\n独自メモ。\n');
+	const steering = discoverSteering([root], ['.agents']);
+	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
+	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
+	const s1Files = warnings.filter((w) => w.ruleId === 'S1').map((w) => path.basename(w.file));
+	assert.ok(!s1Files.includes('product.md'), 'product.md は S1 対象外');
+	assert.ok(!s1Files.includes('structure.md'), 'structure.md は S1 対象外');
+	assert.ok(!s1Files.includes('tech.md'), 'tech.md は S1 対象外');
+	assert.ok(s1Files.includes('custom-notes.md'), '通常の Steering には S1 が出る');
+	// 予約ファイルも常時ロードとしての集計・シミュレーション対象ではあること
+	const product = steering.find((s) => s.name === 'product');
+	assert.equal(product?.inclusion, 'always');
+});
+
 test('inclusion の綴り間違いに S6 が出る', () => {
 	const root = tmpRoot();
 	setupWorkspace(root);
