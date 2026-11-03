@@ -34,6 +34,8 @@ export interface FileInfo {
 
 export interface SkillUnit {
 	dir: string;
+	/** 発見元の探索ルート（ワークスペースフォルダ等）。マルチルート時のグルーピング単位 */
+	sourceRoot: string;
 	skillMdPath: string;
 	name: string;
 	frontmatter: Frontmatter;
@@ -208,7 +210,7 @@ export function readFileInfo(absPath: string, skillDir: string): FileInfo {
 	return { absPath, relToSkill, exists, isDirectory, boundary, tokens, lines, refs, text };
 }
 
-export function buildUnit(skillDir: string): SkillUnit {
+export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 	const skillMdPath = path.join(skillDir, 'SKILL.md');
 	const skillInfo = readFileInfo(skillMdPath, skillDir);
 	const content = skillInfo.text ?? '';
@@ -299,6 +301,7 @@ export function buildUnit(skillDir: string): SkillUnit {
 
 	return {
 		dir: skillDir,
+		sourceRoot,
 		skillMdPath,
 		name,
 		frontmatter,
@@ -328,10 +331,59 @@ function rootPriority(dir: string, canonicalRoots: string[]): number {
 	return Number.MAX_SAFE_INTEGER;
 }
 
+/**
+ * スキルの所属スコープ（グルーピング単位）を決める。
+ * ワークスペースフォルダ内にあるスキルは、そのフォルダ（最長一致）をスコープとする。
+ * skillsRoots がフォルダ内のパス（例: .github/skills）を指していても、正本と複製を
+ * 分割しないよう、フォルダ外の探索ルートはフォルダに一致しない場合にだけ使う。
+ */
+export function scopeRootFor(dir: string, workspaceRoots: string[], extraRoots: string[]): string {
+	const longestIn = (roots: string[]): string => {
+		let best = '';
+		for (const r of roots) {
+			const prefix = r.endsWith(path.sep) ? r : r + path.sep;
+			if ((dir === r || dir.startsWith(prefix)) && r.length > best.length) {
+				best = r;
+			}
+		}
+		return best;
+	};
+	return longestIn(workspaceRoots) || longestIn(extraRoots);
+}
+
+/**
+ * ルートの表示名を決める。同名フォルダが重なる場合は、区別できるまで
+ * 親パスを足していく（例: /work/client/app と /work/server/app → client/app と server/app）。
+ */
+export function rootLabels(roots: string[]): Map<string, string> {
+	const uniq = [...new Set(roots)];
+	const depths = new Map(uniq.map((r) => [r, 1]));
+	const tail = (r: string) => r.split(path.sep).filter(Boolean).slice(-(depths.get(r) ?? 1)).join('/');
+	// 衝突しているラベルだけを一段ずつ深くする（衝突していないものは短いまま）
+	for (let round = 0; round < 8; round++) {
+		const byLabel = new Map<string, string[]>();
+		for (const r of uniq) {
+			const arr = byLabel.get(tail(r)) ?? [];
+			arr.push(r);
+			byLabel.set(tail(r), arr);
+		}
+		const colliding = [...byLabel.values()].filter((arr) => arr.length > 1).flat();
+		if (colliding.length === 0) {
+			break;
+		}
+		for (const r of colliding) {
+			depths.set(r, (depths.get(r) ?? 1) + 1);
+		}
+	}
+	return new Map(uniq.map((r) => [r, tail(r)]));
+}
+
 export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): LogicalSkill[] {
 	const groups = new Map<string, SkillUnit[]>();
 	for (const unit of units) {
-		const key = unit.name;
+		// マルチルート対応: 正本/複製の関係は同一の探索ルート内でのみ成立させる。
+		// 別フォルダ（別リポジトリ）の同名スキルは統合しない。
+		const key = `${unit.sourceRoot}\n${unit.name}`;
 		const arr = groups.get(key) ?? [];
 		arr.push(unit);
 		groups.set(key, arr);
