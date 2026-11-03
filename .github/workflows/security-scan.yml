@@ -1,0 +1,42 @@
+name: 'セキュリティスキャン (Security Scan)'
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/osv-scanner.toml'
+      - '.github/workflows/security-scan.yml'
+  schedule:
+    - cron: '0 0 * * 0' # 毎週日曜 0:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  security-events: write
+  contents: read
+
+jobs:
+  security:
+    name: '共通セキュリティスキャン実行 (Execute Base Security)'
+    uses: masanori-satake/common-workflows/.github/workflows/base-security.yml@v1
+    with:
+      # devDependencies（vsce / mocha / eslint などの開発ツール）は VSIX に同梱されないため、
+      # 合否判定から除外する。拡張機能本体の dependencies は従来どおり検査する。
+      audit_omit_dev: true
+      # VSCode 拡張機能は ./projects ディレクトリを持たないため、
+      # ルートの package.json / package-lock.json のみをスキャン対象とする。
+      # devDependencies の除外ルールは .github/osv-scanner.toml に定義している。
+      osv_scan_args: |-
+        --config=./.github/osv-scanner.toml
+        --recursive
+        ./package.json
+        ./package-lock.json

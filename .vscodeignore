@@ -1,0 +1,23 @@
+# 開発環境・テスト (Development & test)
+.vscode/**
+.vscode-test/**
+**/.vscode-test.*
+out/**
+
+# ソース・ビルド設定 (Sources & build config)
+src/**
+node_modules/**
+**/*.map
+**/*.ts
+**/tsconfig.json
+esbuild.js
+
+# CI・リポジトリ管理 (CI & repository management)
+.git/**
+.github/**
+.gitignore
+*.vsix
+
+# AI エージェント・ツール関連 (AI agent & tool files)
+AGENTS.md
+.agents/**
