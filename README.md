@@ -1,6 +1,6 @@
 # SkillMap-Solo
 
-[![Version](https://img.shields.io/badge/version-v1.6.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v1.7.0-blue.svg)](package.json)
 [![Visual Studio Marketplace](https://vsmarketplacebadges.dev/version/masanori-satake.skillmap-solo.svg?label=Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=masanori-satake.skillmap-solo)
 [![Open VSX](https://img.shields.io/open-vsx/v/masanori-satake/skillmap-solo?label=Open%20VSX)](https://open-vsx.org/extension/masanori-satake/skillmap-solo)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/masanori-satake/SkillMap-Solo)](https://github.com/masanori-satake/SkillMap-Solo/releases)
@@ -18,7 +18,7 @@
 
 AI context files are scattered and related: a SKILL.md points to references, references point to steering docs, and each tool (Kiro, GitHub Copilot) loads a different subset. When nobody sees the whole picture, upkeep lapses and output quality quietly degrades. SkillMap makes the structure, the token cost, and the best-practice gaps visible — and every warning comes with a **Tip** that explains why it matters and how to fix it, so you learn while you practise.
 
-Current version: **v1.6.1**
+Current version: **v1.7.0**
 
 ---
 
@@ -80,7 +80,7 @@ Current version: **v1.6.1**
 
 #### From a VSIX file
 
-1. Download `skillmap-solo-1.6.1.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
+1. Download `skillmap-solo-1.7.0.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
 2. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
 3. Run **Extensions: Install from VSIX...** and select the file
 
@@ -118,6 +118,8 @@ Updates are delivered through the marketplace automatically, or by installing a 
 | `SkillMap: Show Tip` | Open the full Tip for the selected warning |
 | `SkillMap: Open File` | Open the file for the selected node |
 | `SkillMap: Show Load Matrix (per tool)` | Open the per-tool load matrix as Markdown |
+| `SkillMap: Copy Tree` | Copy the whole tree as box-drawing text (for chat / documents) |
+| `SkillMap: Copy Visible Tree` | Copy only the currently expanded part of the tree as text |
 
 ---
 
@@ -127,6 +129,7 @@ Updates are delivered through the marketplace automatically, or by installing a 
 | Setting | Default | Description |
 |---|---|---|
 | `skillmap.canonicalRoots` | `[".agents"]` | Directories treated as the canonical source (priority order) |
+| `skillmap.copyTreeStyle` | `"unicode"` | Tree-copy ruling style: `"unicode"` or `"ascii"` |
 | `skillmap.skillsRoots` | `[]` | Extra directories to scan for SKILL.md files |
 | `skillmap.rules.skillBodyMaxTokens` | `5000` | R5: SKILL.md estimated-token budget (0 disables) |
 | `skillmap.rules.skillBodyMaxLines` | `500` | R4: SKILL.md body line budget (0 disables) |
@@ -197,7 +200,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 AI コンテキストファイルは散在し、関係し合っています。SKILL.md が references を指し、references が Steering を指し、そしてツール（Kiro、GitHub Copilot）ごとに読み込む範囲が違います。全体像が見えないと保守が後回しになり、出力の精度は静かに落ちていきます。SkillMap は構造と読み込みコストとベストプラクティスからのズレを見える化し、すべての警告に「なぜ問題か＋直し方」の **Tips** を付けます。実践しながら理解できることが、この拡張機能の核です。
 
-現在のバージョン: **v1.6.1**
+現在のバージョン: **v1.7.0**
 
 ---
 
@@ -259,7 +262,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 
 #### VSIX ファイルから
 
-1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.6.1.vsix` をダウンロードする
+1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.7.0.vsix` をダウンロードする
 2. コマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）を開く
 3. **Extensions: Install from VSIX...** を実行し、ファイルを選ぶ
 
@@ -297,6 +300,8 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 | `SkillMap: Tipsを表示` | 選択中の警告の Tips 全文を開く |
 | `SkillMap: ファイルを開く` | 選択中のノードのファイルを開く |
 | `SkillMap: ツール別ロードマトリクスを表示` | ツール別の読み込み一覧を Markdown で開く |
+| `SkillMap: ツリー構造をコピー` | ツリー全体を罫線テキストとしてコピーする（チャット／ドキュメント貼り付け用） |
+| `SkillMap: 可視ツリー構造をコピー` | 今開いている範囲だけを罫線テキストとしてコピーする |
 
 ---
 
@@ -306,6 +311,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 | 設定 | 既定値 | 説明 |
 |---|---|---|
 | `skillmap.canonicalRoots` | `[".agents"]` | 正本とみなすディレクトリ（優先順） |
+| `skillmap.copyTreeStyle` | `"unicode"` | ツリーコピーの罫線スタイル: `"unicode"` または `"ascii"` |
 | `skillmap.skillsRoots` | `[]` | SKILL.md を探す追加ディレクトリ |
 | `skillmap.rules.skillBodyMaxTokens` | `5000` | R5: SKILL.md の推定トークン上限（0で無効） |
 | `skillmap.rules.skillBodyMaxLines` | `500` | R4: SKILL.md 本文の行数上限（0で無効） |

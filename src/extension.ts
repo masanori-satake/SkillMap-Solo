@@ -17,6 +17,7 @@ import {
 	type SkillWarning,
 } from './rules.js';
 import { MapNode, SkillMapModel, SkillTreeProvider } from './treeProvider.js';
+import { renderCopyTree } from './copyTree.js';
 import { renderTipMarkdown } from './tips.js';
 import { renderLoadMatrix } from './matrix.js';
 import { L, setLanguage } from './i18n.js';
@@ -99,6 +100,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		showCollapseAll: true,
 	});
 	context.subscriptions.push(treeView);
+	// 開閉状態を記録する（「表示中のツリーをコピー」と、再構築後の展開復元のため）
+	context.subscriptions.push(
+		treeView.onDidExpandElement((e) => provider.noteExpansion(e.element, true)),
+		treeView.onDidCollapseElement((e) => provider.noteExpansion(e.element, false)),
+	);
 	context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(TIP_SCHEME, new TipContentProvider()));
 	context.subscriptions.push(
 		vscode.workspace.registerTextDocumentContentProvider(MATRIX_SCHEME, new MatrixContentProvider(matrixHolder)),
@@ -266,9 +272,28 @@ export function activate(context: vscode.ExtensionContext): void {
 		refreshTimer = setTimeout(rebuild, 300);
 	};
 
+	// ツリーのテキストコピー（全体／表示中）。チャットやドキュメントへ貼って共有するため
+	const copyTreeText = async (visibleOnly: boolean): Promise<void> => {
+		const style =
+			vscode.workspace.getConfiguration('skillmap').get<string>('copyTreeStyle') === 'ascii' ? 'ascii' : 'unicode';
+		const text = renderCopyTree(provider.buildCopyForest(), style, visibleOnly);
+		if (!text.trim()) {
+			void vscode.window.showInformationMessage(L('コピーできるツリーがありません', 'There is no tree to copy'));
+			return;
+		}
+		await vscode.env.clipboard.writeText(text);
+		void vscode.window.showInformationMessage(
+			visibleOnly
+				? L('表示中のツリーをコピーしました', 'Visible tree copied to clipboard')
+				: L('ツリーをコピーしました', 'Tree copied to clipboard'),
+		);
+	};
+
 	context.subscriptions.push(
 		vscode.commands.registerCommand('skillmap.refresh', () => rebuild()),
 		vscode.commands.registerCommand('skillmap.expandAll', () => provider.expandAll(treeView)),
+		vscode.commands.registerCommand('skillmap.copyTree', () => copyTreeText(false)),
+		vscode.commands.registerCommand('skillmap.copyVisibleTree', () => copyTreeText(true)),
 		vscode.commands.registerCommand('skillmap.selectRoot', () => {
 			const folders = vscode.workspace.workspaceFolders ?? [];
 			if (folders.length <= 1) {

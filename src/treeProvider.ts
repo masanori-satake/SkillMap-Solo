@@ -5,6 +5,7 @@ import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
 import { L } from './i18n.js';
+import type { CopyTreeNode } from './copyTree.js';
 
 export type NodeKind =
 	| 'section'
@@ -181,8 +182,70 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 	/** 直近に構築したセクション（すべて展開の走査用） */
 	private sections: MapNode[] = [];
+	/** 利用者が手で開閉したノード（キー→展開状態）。再構築をまたいで保持する */
+	private toggledExpansion = new Map<string, boolean>();
 
 	constructor(private model: SkillMapModel) {}
+
+	/**
+	 * ノードの安定キー（親チェーン＋ノード識別子）。
+	 * TreeItem.id に使うことで再構築後も VS Code が展開状態を復元でき、
+	 * 「表示中のツリーをコピー」も実際の表示と一致させられる
+	 */
+	keyFor(node: MapNode): string {
+		const segment = (n: MapNode): string => {
+			switch (n.kind) {
+				case 'section':
+					return `section:${n.sectionId ?? ''}`;
+				case 'skill':
+					return `skill:${n.unit?.dir ?? n.skill?.canonical.dir ?? ''}`;
+				case 'steering':
+					return `steering:${n.steeringUnit?.filePath ?? n.filePath ?? ''}`;
+				case 'spec':
+					return `spec:${n.specUnit?.dir ?? ''}`;
+				case 'copilot':
+					return `copilot:${n.copilotUnit?.filePath ?? n.filePath ?? ''}`;
+				case 'copy':
+					return `copy:${n.unit?.dir ?? n.filePath ?? ''}`;
+				case 'orphanGroup':
+					return 'orphanGroup';
+				default:
+					return `${n.kind}:${n.filePath ?? n.labelOverride ?? ''}`;
+			}
+		};
+		const chain: string[] = [];
+		let current: MapNode | undefined = node;
+		while (current) {
+			chain.unshift(segment(current));
+			current = current.parent;
+		}
+		return chain.join('\n');
+	}
+
+	/** ツリーの開閉イベントを受けたときに呼ぶ（展開状態の記録） */
+	noteExpansion(node: MapNode, expanded: boolean): void {
+		this.toggledExpansion.set(this.keyFor(node), expanded);
+	}
+
+	/** 記録とデフォルト（Skills セクションは開いた状態で始まる）から見た展開状態 */
+	private isExpanded(node: MapNode): boolean {
+		const toggled = this.toggledExpansion.get(this.keyFor(node));
+		if (toggled !== undefined) {
+			return toggled;
+		}
+		return node.kind === 'section' && node.sectionId === 'skills';
+	}
+
+	/** コピー用に、表示ラベル・説明・展開状態つきの素のツリーへ変換する */
+	buildCopyForest(): CopyTreeNode[] {
+		const toCopy = (node: MapNode): CopyTreeNode => ({
+			label: this.labelFor(node),
+			description: this.descriptionFor(node) || undefined,
+			expanded: this.isExpanded(node),
+			children: (node.children ?? []).map(toCopy),
+		});
+		return this.getChildren().map(toCopy);
+	}
 
 	refresh(): void {
 		this._onDidChangeTreeData.fire();
@@ -203,6 +266,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 
 	getTreeItem(node: MapNode): vscode.TreeItem {
 		const item = new vscode.TreeItem(this.labelFor(node), this.collapsibleStateFor(node));
+		item.id = this.keyFor(node);
 		item.description = this.descriptionFor(node);
 		item.iconPath = this.iconFor(node);
 		item.contextValue = this.contextFor(node);
