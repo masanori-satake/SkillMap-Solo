@@ -523,7 +523,18 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			}
 			case 'spec': {
 				const missing = node.specUnit?.files.filter((f) => !f.present).length ?? 0;
-				const tag = node.specUnit ? folderTag(node.specUnit.name, node.specUnit.workspaceRoot, this.model.specs.map((x) => ({ name: x.name, root: x.workspaceRoot }))) : '';
+				let tag = '';
+				if (node.specUnit) {
+					const roots = [...new Set(this.model.specs.map((x) => x.workspaceRoot))];
+					if (roots.length > 1) {
+						// マルチルートでは同名でなくても、どのフォルダ（リポジトリ）の
+						// Spec かを判別できるよう、常時フォルダ名を付ける
+						const labels = rootLabels(roots);
+						tag = ` · ${labels.get(node.specUnit.workspaceRoot) ?? path.basename(node.specUnit.workspaceRoot)}`;
+					} else {
+						tag = folderTag(node.specUnit.name, node.specUnit.workspaceRoot, this.model.specs.map((x) => ({ name: x.name, root: x.workspaceRoot })));
+					}
+				}
 				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? L(` · 欠落${missing}`, ` · ${missing} missing`) : ''}${warn(badgeCount(node.warnings))}${tag}`;
 			}
 			case 'copilot': {
@@ -697,6 +708,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		}
 		if (node.kind === 'spec' && node.specUnit) {
 			md.appendMarkdown(`**Spec: ${node.specUnit.name}**\n\n`);
+			if (new Set(this.model.specs.map((x) => x.workspaceRoot)).size > 1) {
+				md.appendMarkdown(`- ${L('フォルダ', 'Folder')}: ${escapeMarkdownText(node.specUnit.workspaceRoot)}\n`);
+			}
 			for (const f of node.specUnit.files) {
 				md.appendMarkdown(`- ${f.fileName}: ${f.present ? `≈${f.tokens.toLocaleString()} tok` : L('欠落', 'missing')}\n`);
 			}

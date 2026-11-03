@@ -108,6 +108,18 @@ export function activate(context: vscode.ExtensionContext): void {
 	let currentSettings = readSettings();
 	let refreshTimer: NodeJS.Timeout | undefined;
 
+	// 対象ルートの絞り込み（マルチルート用）。undefined = 全ルート。
+	// 選択はワークスペースごとに保持し、再起動後も維持する
+	let rootFilter = context.workspaceState.get<string>('skillmap.rootFilter');
+	const updateFilterMessage = () => {
+		if (rootFilter) {
+			const folder = (vscode.workspace.workspaceFolders ?? []).find((f) => f.uri.fsPath === rootFilter);
+			treeView.message = `${L('表示対象', 'Showing')}: ${folder?.name ?? path.basename(rootFilter)}${L(' のみ（ルートで絞り込み中）', ' only (filtered by root)')}`;
+		} else {
+			treeView.message = undefined;
+		}
+	};
+
 	const updateDiagnostics = (all: SkillWarning[]) => {
 		diagnostics.clear();
 		const byFile = new Map<string, vscode.Diagnostic[]>();
@@ -182,19 +194,27 @@ export function activate(context: vscode.ExtensionContext): void {
 		currentSettings = readSettings();
 		const settings = currentSettings;
 		const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+		// 選択中ルートがワークスペースから外れていたら絞り込みを解除する
+		if (rootFilter && !workspaceRoots.includes(rootFilter)) {
+			rootFilter = undefined;
+			void context.workspaceState.update('skillmap.rootFilter', undefined);
+		}
+		void vscode.commands.executeCommand('setContext', 'skillmap.multiRoot', workspaceRoots.length > 1);
+		// 絞り込み中は対象フォルダだけを走査する（表示量と走査コストの両方を減らす）
+		const scanRoots = rootFilter ? [rootFilter] : workspaceRoots;
 		// 追加の探索ルート: 相対指定は各ワークスペースフォルダごとに解決する（マルチルート対応）
 		const extraRoots: string[] = [];
 		for (const r of settings.skillsRoots) {
 			if (path.isAbsolute(r)) {
 				extraRoots.push(r);
 			} else {
-				for (const w of workspaceRoots) {
+				for (const w of scanRoots) {
 					extraRoots.push(path.join(w, r));
 				}
 			}
 		}
 		// Skills（グルーピングのスコープは scopeRootFor: フォルダ内はフォルダ単位に揃える）
-		const dirs = findSkillDirs(workspaceRoots, extraRoots);
+		const dirs = findSkillDirs(scanRoots, extraRoots);
 		const units = dirs.map((d) => buildUnit(d, scopeRootFor(d, workspaceRoots, extraRoots)));
 		const skills = groupSkills(units, settings.canonicalRoots);
 		const skillWarnings = new Map<string, SkillWarning[]>();
@@ -205,12 +225,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			allWarnings.push(...w);
 		}
 		// Steering / Specs / Copilot
-		const steering = discoverSteering(workspaceRoots, settings.canonicalRoots);
-		const relPathsByRoot = new Map(workspaceRoots.map((r) => [r, listWorkspaceRelPaths([r])]));
+		const steering = discoverSteering(scanRoots, settings.canonicalRoots);
+		const relPathsByRoot = new Map(scanRoots.map((r) => [r, listWorkspaceRelPaths([r])]));
 		const steeringWarnings = evaluateSteering(steering, relPathsByRoot, settings.rules);
-		const specs = discoverSpecs(workspaceRoots);
+		const specs = discoverSpecs(scanRoots);
 		const specWarnings = evaluateSpecs(specs);
-		const copilot = discoverCopilot(workspaceRoots);
+		const copilot = discoverCopilot(scanRoots);
 		allWarnings.push(...steeringWarnings, ...specWarnings);
 
 		model.skills = skills;
@@ -224,6 +244,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		matrixHolder.markdown = renderLoadMatrix(skills, steering, specs, copilot);
 
 		provider.refresh();
+		updateFilterMessage();
 		updateDiagnostics(allWarnings);
 		updateSimulation();
 	};
@@ -237,6 +258,33 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('skillmap.refresh', () => rebuild()),
 		vscode.commands.registerCommand('skillmap.expandAll', () => provider.expandAll(treeView)),
+		vscode.commands.registerCommand('skillmap.selectRoot', () => {
+			const folders = vscode.workspace.workspaceFolders ?? [];
+			if (folders.length <= 1) {
+				return;
+			}
+			type RootItem = vscode.QuickPickItem & { root?: string };
+			const items: RootItem[] = [
+				{ label: L('すべてのルート', 'All roots'), root: undefined },
+				...folders.map((f): RootItem => ({ label: f.name, description: f.uri.fsPath, root: f.uri.fsPath })),
+			];
+			const qp = vscode.window.createQuickPick<RootItem>();
+			qp.items = items;
+			qp.placeholder = L('表示するルートを選択', 'Select the root to display');
+			qp.activeItems = items.filter((i) => i.root === rootFilter);
+			qp.onDidAccept(() => {
+				const sel = qp.activeItems[0];
+				qp.hide();
+				if (!sel || sel.root === rootFilter) {
+					return;
+				}
+				rootFilter = sel.root;
+				void context.workspaceState.update('skillmap.rootFilter', rootFilter);
+				rebuild();
+			});
+			qp.onDidHide(() => qp.dispose());
+			qp.show();
+		}),
 		vscode.commands.registerCommand('skillmap.openFile', async (node?: MapNode) => {
 			if (!node?.filePath) {
 				return;
