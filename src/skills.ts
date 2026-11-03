@@ -208,8 +208,11 @@ function existsOnDisk(p: string): boolean {
 	try {
 		fs.statSync(p);
 		return true;
-	} catch {
-		return false;
+	} catch (err) {
+		// 不在と断定できるのは ENOENT / ENOTDIR のみ。権限エラー等で読めないだけの
+		// ファイルを「不在」として別の同名ファイルへ付け替えないよう、存在側に倒す
+		const code = (err as NodeJS.ErrnoException).code;
+		return code !== 'ENOENT' && code !== 'ENOTDIR';
 	}
 }
 
@@ -285,7 +288,11 @@ export function extractReferences(fromFile: string, text: string, resCtx?: Resol
 		CODE_SPAN_RE.lastIndex = 0;
 		while ((m = CODE_SPAN_RE.exec(lineText)) !== null) {
 			const candidate = m[1].trim();
-			if (PATH_LIKE_RE.test(candidate) && hasFileLikeExtension(candidate)) {
+			// 拡張子が未知でも、索引内に実在する同名ファイルがあれば候補にする
+			// （実在するものを拡張子リストだけで除外しない）。存在しない
+			// プロパティチェーンは索引にも無いため、引き続き除外される
+			const existsInIndex = resCtx?.byBasename.has(path.basename(candidate)) ?? false;
+			if (PATH_LIKE_RE.test(candidate) && (hasFileLikeExtension(candidate) || existsInIndex)) {
 				push(candidate, i, 'code');
 			}
 		}

@@ -595,6 +595,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'orphanGroup':
 				return new vscode.ThemeIcon('archive');
 			case 'missing':
+				// Spec の未作成ファイルは「作るべきものの欠落」なのでエラー表示を維持する
+				if (node.specUnit) {
+					return new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
+				}
 				// 未解決の参照は不具合と断定しないため、R7 / R13 ともに中立色のファイルアイコンにする
 				return new vscode.ThemeIcon('file', new vscode.ThemeColor('disabledForeground'));
 			case 'cycle':

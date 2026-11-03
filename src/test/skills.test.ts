@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, rootLabels, scopeRootFor } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, rootLabels, scopeRootFor } from '../skills.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
@@ -379,4 +379,16 @@ description: 曖昧な同名のテスト用。テストを実行するときに�
 	const skill = groupSkills([unit], ['.agents'])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	assert.equal(warnings.filter((w) => w.ruleId === 'R13').length, 1, '曖昧な同名は要確認のまま');
+});
+
+test('候補判定: 未知の拡張子でも実在するファイルは候補になる', () => {
+	const root = tmpRoot();
+	write(root, 'docs/diagram.mmd', 'graph TD;\n');
+	const from = path.join(root, 'docs/a.md');
+	const resCtx = buildResolutionContext([], [root]);
+	const edges = extractReferences(from, '`diagram.mmd` を参照。`other.mmd` は無い。\n', resCtx);
+	// diagram.mmd は実在するため候補になり解決する。other.mmd は存在せず拡張子も未知なので候補にならない
+	assert.equal(edges.length, 1);
+	assert.equal(edges[0].raw, 'diagram.mmd');
+	assert.equal(edges[0].exists, true);
 });
