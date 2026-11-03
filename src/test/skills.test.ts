@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildUnit, extractReferences, findSkillDirs, groupSkills, rootLabels, scopeRootFor } from '../skills.js';
+import { buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, rootLabels, scopeRootFor } from '../skills.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
@@ -259,4 +259,47 @@ test('抽出: 同じ行のリンクとコードスパンはリンクとして格
 	assert.equal(edges.length, 1, '同一参照先は1エッジ');
 	assert.equal(edges[0].via, 'link');
 	assert.deepEqual(edges[0].lines, [0, 2]);
+});
+
+test('抽出: 日本語のパス付きコードスパンも候補になり、参照切れとして扱う', () => {
+	const root = tmpRoot();
+	const from = path.join(root, 'a.md');
+	const edges = extractReferences(from, '`references/要件定義.md` を参照\n');
+	assert.equal(edges.length, 1);
+	assert.equal(isTentativeMention(edges[0]), false, 'パス付きは言及ではなく参照');
+});
+
+test('抽出: 後から現れたパス付き表記に格上げされ、R13 ではなく R7 になる', () => {
+	const root = tmpRoot();
+	const from = path.join(root, 'a.md');
+	const edges = extractReferences(from, '`planned.md` が先\n\n`./planned.md` が後\n');
+	assert.equal(edges.length, 1, '同一参照先は1エッジ');
+	assert.equal(edges[0].raw, './planned.md');
+	assert.equal(isTentativeMention(edges[0]), false);
+});
+
+test('警告: 同じ行の別々の未解決参照は target で区別できる', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/mixed/SKILL.md',
+		`---
+name: mixed
+description: 突合テスト用。テストを実行するときに使う。
+---
+
+# Mixed
+
+[a](gone-a.md) と \`planned-b.md\` が同じ行にある。
+`,
+	);
+	const unit = buildUnit(path.join(root, 'skills/mixed'));
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	const r7 = warnings.find((w) => w.ruleId === 'R7');
+	const r13 = warnings.find((w) => w.ruleId === 'R13');
+	assert.ok(r7 && r13, 'R7 と R13 が1件ずつ出る');
+	assert.equal(r7.line, r13.line, '同じ行');
+	assert.ok(r7.target?.endsWith('gone-a.md'));
+	assert.ok(r13.target?.endsWith('planned-b.md'));
 });

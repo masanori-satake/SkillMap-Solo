@@ -331,7 +331,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					missing.mentionLines = edge.lines;
 					if (unit === skill.canonical) {
 						const warnings = this.model.skillWarnings.get(skill.key) ?? [];
-						missing.warnings = warnings.filter((w) => (w.ruleId === 'R7' || w.ruleId === 'R13') && w.file === filePath && w.line === edge.line);
+						missing.warnings = warnings.filter((w) => (w.ruleId === 'R7' || w.ruleId === 'R13') && w.file === filePath && w.line === edge.line && w.target === edge.target);
 					}
 					children.push(missing);
 					continue;

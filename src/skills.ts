@@ -145,11 +145,12 @@ export function findSkillDirs(workspaceRoots: string[], extraRoots: string[]): s
 
 const LINK_RE = /\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const CODE_SPAN_RE = /`([^`\n]+)`/g;
-// ファイル名のみの候補は、構文記号（括弧・引用符・演算子・グロブ等）を含むものを
+// パス・ファイル名の候補は、構文記号（括弧・引用符・演算子・グロブ等）を含むものを
 // 除外文字方式で弾く。`targets[i].name` のような式をファイル名と誤認しないため。
-// ASCII の \w に狭めると日本語ファイル名が落ちるため、除外方式にしている。
+// ASCII の \w に狭めると日本語ファイル名（パス中のセグメント含む）が落ちるため、
+// パス付き・ファイル名のみの双方を除外方式にしている。
 const PATH_LIKE_RE =
-	/^[\w.@~+%-]+(\/[\w.@~+%-]+)+(\.\w+)?$|^[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+(\.[^\s\/.\[\](){}<>"'|=;:,!?*#$&\\]{1,10})$/;
+	/^[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+(\/[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+)+(\.[^\s\/.\[\](){}<>"'|=;:,!?*#$&\\]{1,10})?$|^[^\s\/\[\](){}<>"'|=;:,!?*#$&\\]+(\.[^\s\/.\[\](){}<>"'|=;:,!?*#$&\\]{1,10})$/;
 
 export function extractReferences(fromFile: string, text: string): RefEdge[] {
 	const edges: RefEdge[] = [];
@@ -173,6 +174,11 @@ export function extractReferences(fromFile: string, text: string): RefEdge[] {
 			// リンク記法で書かれた箇所が1つでもあれば、参照の意図は明示的として格上げする
 			if (via === 'link') {
 				existing.via = 'link';
+			}
+			// パス付きで書かれた箇所が1つでもあれば、そちらを代表表記にして
+			// 「ファイル名のみの言及」（R13）ではなく参照切れ（R7）として扱う
+			if (cleaned.includes('/') && !existing.raw.includes('/')) {
+				existing.raw = cleaned;
 			}
 			return;
 		}

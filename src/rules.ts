@@ -140,7 +140,7 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 		title: { ja: '要確認の言及', en: 'Mention to check' },
 		tip: {
 			principle: {
-				ja: 'ファイル名だけの言及は、参照のつもりで書かれたとは限りません。構造の説明や、これから作るファイルの名前であることも多いものです。',
+				ja: 'ファイル名だけの言及は、参照のつもりで書かれたとは限らず、構造の説明や、これから作るファイルの名前であることも多いものです。',
 				en: 'A bare file name in the text is not necessarily meant as a reference — it may just describe structure, or name a file yet to be created.',
 			},
 			fix: {
@@ -366,6 +366,9 @@ export interface SkillWarning {
 	line?: number;
 	/** 複製に対する警告の場合、その複製ユニット */
 	copyDir?: string;
+	/** 参照系ルール（R7/R13）の場合、解決先の絶対パス。同じ行に複数の未解決参照が
+	 * あっても、ツリーのノードと警告を正しく対応付けるために使う */
+	target?: string;
 }
 
 const WHEN_KEYWORDS = [
@@ -523,9 +526,9 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 				continue;
 			}
 			if (isTentativeMention(edge)) {
-				push({ ruleId: 'R13', severity: 'info', message: L(`同名のファイルが見つかりません: ${edge.raw}`, `No file with this name was found: ${edge.raw}`), file: from, line: edge.line });
+				push({ ruleId: 'R13', severity: 'info', message: L(`同名のファイルが見つかりません: ${edge.raw}`, `No file with this name was found: ${edge.raw}`), file: from, line: edge.line, target: edge.target });
 			} else {
-				push({ ruleId: 'R7', severity: 'warn', message: L(`参照先が存在しません: ${edge.raw}`, `Reference target does not exist: ${edge.raw}`), file: from, line: edge.line });
+				push({ ruleId: 'R7', severity: 'warn', message: L(`参照先が存在しません: ${edge.raw}`, `Reference target does not exist: ${edge.raw}`), file: from, line: edge.line, target: edge.target });
 			}
 		}
 	}
