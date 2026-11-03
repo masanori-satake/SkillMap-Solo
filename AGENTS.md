@@ -42,12 +42,13 @@ pre-commit フックおよび CI にてバージョン更新チェックが実�
 - `src/skills.ts` — Skills の発見・グルーピング（正本/複製）・参照グラフ構築
 - `src/contexts.ts` — Steering / Specs / Copilot instructions の発見とロードシミュレーション
 - `src/glob.ts` — 簡易 glob マッチャ（`**` / `*` / `?` / ブレース展開）
-- `src/rules.ts` — 警告ルール（R1–R11 / S1–S5）と Tips データ
+- `src/rules.ts` — 警告ルール（R1–R12 / S1–S6）と Tips データ
 - `src/tips.ts` — Tips の Markdown 生成とホバー用要約
 - `src/matrix.ts` — ツール別ロードマトリクスの Markdown 生成
 - `src/treeProvider.ts` — エクスプローラーのツリー表示（セクション制）
 - `src/tokens.ts` — トークン推定（文字種ベース、依存ゼロ）
 - `src/frontmatter.ts` — frontmatter の最小パーサ
+- `src/i18n.ts` — 表示言語の保持と文字列選択（`L(ja, en)`）。純粋モジュールから参照される
 - `src/test/` — 純粋モジュールの単体テスト（node:test）
 
 ## ⚙️ 開発コマンド
@@ -63,6 +64,6 @@ npm run update-version <X.Y.Z>  # 4点一括のバージョン更新
 ## 📝 コーディング規約
 
 - 言語は TypeScript（strict）。ビルドは esbuild、出力は `dist/extension.js`。
-- 純粋モジュール（tokens / frontmatter / skills / contexts / glob / rules / tips / matrix）は `vscode` に依存させない（単体テスト可能に保つ）。
+- 純粋モジュール（tokens / frontmatter / skills / contexts / glob / rules / tips / matrix / i18n）は `vscode` に依存させない（単体テスト可能に保つ）。表示文言は `i18n.ts` の `L(ja, en)` 経由で出し、言語は extension.ts が起動時に `vscode.env.language` から設定する。
 - README / CHANGELOG の体裁は Solo シリーズ共通の型に従う（英語→日本語、見出し直前の `<a id>` アンカー、Keep a Changelog 式の見出し）。README を編集したら `npm run check-readme-anchors` が通ることを確認する。
 - 警告ルールを追加する場合は、必ず Tips（原則1文＋具体的な直し方）をセットで追加する。警告だけのルールは作らない。

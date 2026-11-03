@@ -110,6 +110,36 @@ ${body}
 	assert.ok(byRule('R6').length >= 1, '深さ超過（deep2 は深さ3）');
 });
 
+test('frontmatter の文字種・サイズ: ハイフン位置と compatibility 上限を検出する', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'.agents/skills/bad-hyphen-/SKILL.md',
+		`---\nname: bad-hyphen-\ndescription: テスト用。検証するときに使う。\ncompatibility: ${'x'.repeat(501)}\n---\n\n# Bad\n`,
+	);
+	write(
+		root,
+		'.agents/skills/double--hyphen/SKILL.md',
+		`---\nname: double--hyphen\ndescription: テスト用。検証するときに使う。\n---\n\n# Bad2\n`,
+	);
+	const dirs = findSkillDirs([root], []);
+	const units = dirs.map((d) => buildUnit(d));
+	const skills = groupSkills(units, ['.agents']);
+	const all: string[] = [];
+	const messages: string[] = [];
+	for (const skill of skills) {
+		for (const w of evaluateSkill(skill, DEFAULT_RULE_SETTINGS)) {
+			all.push(w.ruleId);
+			messages.push(w.message);
+		}
+	}
+	const hyphenEdge = messages.filter((m) => m.includes('先頭・末尾'));
+	const hyphenDouble = messages.filter((m) => m.includes('連続するハイフン'));
+	assert.equal(hyphenEdge.length, 1, '末尾ハイフンを検出');
+	assert.equal(hyphenDouble.length, 1, '連続ハイフンを検出');
+	assert.ok(all.includes('R12'), 'compatibility 501文字で R12');
+});
+
 test('description に利用シーンが無いと R3 が出る', () => {
 	const root = tmpRoot();
 	write(root, 'skills/plain/SKILL.md', `---

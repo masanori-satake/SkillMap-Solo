@@ -1,6 +1,6 @@
 # SkillMap-Solo
 
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](package.json)
 [![Visual Studio Marketplace](https://vsmarketplacebadges.dev/version/masanori-satake.skillmap-solo.svg?label=Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=masanori-satake.skillmap-solo)
 [![Open VSX](https://img.shields.io/open-vsx/v/masanori-satake/skillmap-solo?label=Open%20VSX)](https://open-vsx.org/extension/masanori-satake/skillmap-solo)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/masanori-satake/SkillMap-Solo)](https://github.com/masanori-satake/SkillMap-Solo/releases)
@@ -18,7 +18,7 @@
 
 AI context files are scattered and related: a SKILL.md points to references, references point to steering docs, and each tool (Kiro, GitHub Copilot) loads a different subset. When nobody sees the whole picture, upkeep lapses and output quality quietly degrades. SkillMap makes the structure, the token cost, and the best-practice gaps visible — and every warning comes with a **Tip** that explains why it matters and how to fix it, so you learn while you practise.
 
-Current version: **v1.0.0**
+Current version: **v1.1.0**
 
 ---
 
@@ -50,7 +50,7 @@ Current version: **v1.0.0**
    - Selecting a node shows the **path total** from the SKILL.md root to that node in the status bar.
    - The skill root shows the whole-skill total, counting shared files only once.
 
-3. **Best-practice warnings with Tips (R1–R11 / S1–S5)**
+3. **Best-practice warnings with Tips (R1–R12 / S1–S6)**
    - SKILL.md size budgets, description quality, reference depth, drift between a canonical skill and its copies, dead `fileMatchPattern`s, and more.
    - Every warning links to a Tip: the principle in one sentence plus a concrete fix. Warnings also appear in the Problems panel.
 
@@ -79,7 +79,7 @@ Current version: **v1.0.0**
 
 #### From a VSIX file
 
-1. Download `skillmap-solo-1.0.0.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
+1. Download `skillmap-solo-1.1.0.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
 2. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
 3. Run **Extensions: Install from VSIX...** and select the file
 
@@ -97,11 +97,11 @@ Updates are delivered through the marketplace automatically, or by installing a 
 5. Run **SkillMap: Show Load Matrix (per tool)** from the view title bar to compare what Kiro and Copilot load.
 6. While editing any file, the status bar (β) shows the simulated load for that file: `Kiro ≈X / Copilot ≈Y tok`.
 
-![SkillMap tree with all sections](docs/images/skillmap-tree.png)
+![SkillMap tree with all sections](docs/images/skillmap-tree-en.png)
 
-![Warning hover with a Tip](docs/images/skillmap-tip.png)
+![Warning hover with a Tip](docs/images/skillmap-tip-en.png)
 
-![Path total and load simulation in the status bar](docs/images/skillmap-statusbar.png)
+![Path total and load simulation in the status bar](docs/images/skillmap-statusbar-en.png)
 
 **Note on token counts:** all token figures are *estimates* based on character types (roughly 1 token per Japanese character, 1 token per 4 alphanumeric characters). They are meant for comparing and budgeting, not billing.
 
@@ -195,7 +195,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 AI コンテキストファイルは散在し、関係し合っています。SKILL.md が references を指し、references が Steering を指し、そしてツール（Kiro、GitHub Copilot）ごとに読み込む範囲が違います。全体像が見えないと保守が後回しになり、出力の精度は静かに落ちていきます。SkillMap は構造と読み込みコストとベストプラクティスからのズレを見える化し、すべての警告に「なぜ問題か＋直し方」の **Tips** を付けます。実践しながら理解できることが、この拡張機能の核です。
 
-現在のバージョン: **v1.0.0**
+現在のバージョン: **v1.1.0**
 
 ---
 
@@ -227,7 +227,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
    - ノード選択時は、SKILL.md からそのノードまでの**経路合計**をステータスバーに表示します。
    - スキルのルートには、共有ファイルを1回だけ数えたスキル全体の合計を表示します。
 
-3. **Tips 付きベストプラクティス警告（R1–R11 / S1–S5）**
+3. **Tips 付きベストプラクティス警告（R1–R12 / S1–S6）**
    - SKILL.md のサイズ予算、description の質、参照の深さ、正本と複製のドリフト、実ファイルに一致しない fileMatchPattern など。
    - すべての警告に Tips（原則1文＋具体的な直し方）へのリンクが付きます。警告は Problems パネルにも出ます。
 
@@ -256,7 +256,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 
 #### VSIX ファイルから
 
-1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.0.0.vsix` をダウンロードする
+1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.1.0.vsix` をダウンロードする
 2. コマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）を開く
 3. **Extensions: Install from VSIX...** を実行し、ファイルを選ぶ
 

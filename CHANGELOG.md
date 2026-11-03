@@ -2,11 +2,18 @@
 
 "SkillMap-Solo" 拡張機能のすべての注目すべき変更はこのファイルに記録されます。
 
+## [1.1.0] - 2026-11-03
+
+### 追加 (Added)
+- **frontmatter の文字種・サイズ検証を拡充**: name のハイフン位置・連続ハイフン（R1 強化）、compatibility の500文字上限（R12 を新設）、Steering の inclusion の想定外の値（S6 を新設。綴り間違いが常時ロードに化ける事故を防ぐ）
+- **表示の多言語対応（英語／日本語）**: ツリー表示・警告メッセージ・Tips・ロードマトリクス・ステータスバーの文言を、VS Code の表示言語に追随させた（MeetDock-Solo と同じ i18n.ts 方式）。英語環境ではすべて英語で表示される
+- **README のスクリーンショットを言語別に分離**: 英語セクションには英語 UI のスクリーンショット（`*-en.png`）、日本語セクションには日本語 UI のスクリーンショットを掲載
+
 ## [1.0.0] - 2026-11-03
 
 ### 追加 (Added)
 - **Kiro Steering の第一級表示**: `.kiro/steering/` を専用セクションに表示。inclusion（常時／条件／手動）をバッジ化し、常時ロード合計の推定トークンをセクションに集計
-- **Steering ルール S1–S3 / S5（Tips 付き）**: inclusion 未指定（S1）、実ファイルに一致しない fileMatchPattern（S2）、常時ロード合計の予算（S3、`skillmap.rules.steeringAlwaysTokenBudget` で設定）、正本（`.agents/steering`）との乖離（S5）
+- **Steering ルール S1–S3 / S5 / S6（Tips 付き）**: inclusion 未指定（S1）、実ファイルに一致しない fileMatchPattern（S2）、常時ロード合計の予算（S3、`skillmap.rules.steeringAlwaysTokenBudget` で設定）、正本（`.agents/steering`）との乖離（S5）
 - **Specs（β）**: `.kiro/specs/` の3点セット（requirements / design / tasks）をセクション表示。欠けは S4 として通知
 - **Copilot instructions の読み取り表示**: `.github/copilot-instructions.md`、`.github/instructions/*.instructions.md`（applyTo 表示）、`AGENTS.md` を専用セクションに表示
 - **ツール別ロードマトリクス**: コマンド「Show Load Matrix (per tool)」で、どのファイルが・どのツールで・いつ読まれるかを Markdown 一覧表示

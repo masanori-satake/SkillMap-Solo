@@ -10,6 +10,7 @@ import {
 	type FileGraph,
 } from './skills.js';
 import { matchesAnyPattern } from './glob.js';
+import { L } from './i18n.js';
 
 export type Inclusion = 'always' | 'fileMatch' | 'manual';
 
@@ -20,6 +21,8 @@ export interface SteeringUnit {
 	inclusion: Inclusion;
 	/** inclusion が frontmatter に明示されていたか */
 	inclusionExplicit: boolean;
+	/** frontmatter に書かれた inclusion の生値（検証用） */
+	inclusionRaw?: string;
 	fileMatchPattern?: string;
 	tokens: number;
 	graph: FileGraph;
@@ -108,6 +111,7 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 				name: path.basename(filePath, '.md'),
 				inclusion,
 				inclusionExplicit: rawInclusion.length > 0,
+				inclusionRaw: rawInclusion || undefined,
 				fileMatchPattern: fm.values['fileMatchPattern']?.trim() || undefined,
 				tokens: estimateTokens(text),
 				graph: buildFileGraph(filePath, steeringDir),
@@ -241,7 +245,7 @@ export function simulateLoad(
 	const kiro: Array<{ name: string; tokens: number; reason: string }> = [];
 	for (const s of steering) {
 		if (s.inclusion === 'always') {
-			kiro.push({ name: path.basename(s.filePath), tokens: s.tokens, reason: '常時' });
+			kiro.push({ name: path.basename(s.filePath), tokens: s.tokens, reason: L('常時', 'always') });
 		} else if (s.inclusion === 'fileMatch' && s.fileMatchPattern && matchesAnyPattern(s.fileMatchPattern, relPathPosix)) {
 			kiro.push({ name: path.basename(s.filePath), tokens: s.tokens, reason: `fileMatch: ${s.fileMatchPattern}` });
 		}
@@ -249,7 +253,7 @@ export function simulateLoad(
 	const cop: Array<{ name: string; tokens: number; reason: string }> = [];
 	for (const c of copilot) {
 		if (c.mode === 'always') {
-			cop.push({ name: c.name, tokens: c.tokens, reason: '常時' });
+			cop.push({ name: c.name, tokens: c.tokens, reason: L('常時', 'always') });
 		} else if (c.applyTo && matchesAnyPattern(c.applyTo, relPathPosix)) {
 			cop.push({ name: c.name, tokens: c.tokens, reason: `applyTo: ${c.applyTo}` });
 		}

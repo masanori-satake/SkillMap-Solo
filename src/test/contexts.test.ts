@@ -11,6 +11,7 @@ import {
 	simulateLoad,
 } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSpecs, evaluateSteering } from '../rules.js';
+import { setLanguage } from '../i18n.js';
 
 function tmpRoot(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), 'skillmap-ctx-'));
@@ -81,4 +82,36 @@ test('Copilot 発見とロードシミュレーションが機能する', () => 
 	const sim2 = simulateLoad('docs/note.md', steering, copilot);
 	assert.deepEqual(sim2.kiro.map((x) => x.name), ['base.md']);
 	assert.equal(sim2.copilot.length, 2, 'applyTo 不一致の instructions は含まれない');
+});
+
+test('inclusion の綴り間違いに S6 が出る', () => {
+	const root = tmpRoot();
+	setupWorkspace(root);
+	write(root, '.kiro/steering/typo.md', '---\ninclusion: alwyas\n---\n\n# Typo\n');
+	const steering = discoverSteering([root], ['.agents']);
+	const rels = listWorkspaceRelPaths([root]);
+	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
+	const s6 = warnings.filter((w) => w.ruleId === 'S6');
+	assert.equal(s6.length, 1);
+	assert.ok(s6[0].file.endsWith('typo.md'));
+	// 暗黙に always 扱いになることも併せて確認
+	const typo = steering.find((s) => s.name === 'typo');
+	assert.equal(typo?.inclusion, 'always');
+});
+
+test('表示言語を英語に切り替えると警告メッセージも英語になる', () => {
+	const root = tmpRoot();
+	setupWorkspace(root);
+	const steering = discoverSteering([root], ['.agents']);
+	const rels = listWorkspaceRelPaths([root]);
+	setLanguage('en');
+	try {
+		const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
+		const s1 = warnings.find((w) => w.ruleId === 'S1');
+		assert.ok(s1 && s1.message.includes('inclusion is not specified'));
+		const s2 = warnings.find((w) => w.ruleId === 'S2');
+		assert.ok(s2 && s2.message.includes('matches no file'));
+	} finally {
+		setLanguage('ja');
+	}
 });

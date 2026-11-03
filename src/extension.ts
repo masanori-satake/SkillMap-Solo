@@ -20,6 +20,7 @@ import {
 import { MapNode, SkillMapModel, SkillTreeProvider } from './treeProvider.js';
 import { renderTipMarkdown } from './tips.js';
 import { renderLoadMatrix } from './matrix.js';
+import { L, setLanguage } from './i18n.js';
 
 const TIP_SCHEME = 'skillmap-tip';
 const MATRIX_SCHEME = 'skillmap-matrix';
@@ -83,14 +84,15 @@ function severityOf(w: SkillWarning): vscode.DiagnosticSeverity {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+	setLanguage(vscode.env.language.toLowerCase().startsWith('ja') ? 'ja' : 'en');
 	const model = new SkillMapModel();
 	const provider = new SkillTreeProvider(model);
 	const diagnostics = vscode.languages.createDiagnosticCollection('skillmap');
 	const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-	statusBar.name = 'SkillMap 経路合計';
+	statusBar.name = L('SkillMap 経路合計', 'SkillMap Path Total');
 	const simBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
-	simBar.name = 'SkillMap ロードシミュレーション（β）';
-	const matrixHolder = { markdown: '# SkillMap\n\n（データがありません）\n' };
+	simBar.name = L('SkillMap ロードシミュレーション（β）', 'SkillMap Load Simulation (Beta)');
+	const matrixHolder = { markdown: L('# SkillMap\n\n（データがありません）\n', '# SkillMap\n\n(no data)\n') };
 	context.subscriptions.push(diagnostics, statusBar, simBar);
 
 	const treeView = vscode.window.createTreeView('skillmap-view', {
@@ -157,16 +159,16 @@ export function activate(context: vscode.ExtensionContext): void {
 			simBar.hide();
 			return;
 		}
-		simBar.text = `$(book) 読込β Kiro ≈${kiroTotal.toLocaleString()} / Copilot ≈${copTotal.toLocaleString()} tok`;
-		const lines = [`対象: ${rel}`, '', 'Kiro:'];
+		simBar.text = `$(book) ${L('読込β', 'Load β')} Kiro ≈${kiroTotal.toLocaleString()} / Copilot ≈${copTotal.toLocaleString()} tok`;
+		const lines = [L(`対象: ${rel}`, `Target: ${rel}`), '', 'Kiro:'];
 		for (const x of sim.kiro) {
-			lines.push(`- ${x.name} ≈${x.tokens.toLocaleString()} tok（${x.reason}）`);
+			lines.push(`- ${x.name} ≈${x.tokens.toLocaleString()} tok (${x.reason})`);
 		}
 		lines.push('', 'Copilot:');
 		for (const x of sim.copilot) {
 			lines.push(`- ${x.name} ≈${x.tokens.toLocaleString()} tok（${x.reason}）`);
 		}
-		lines.push('', '※ 簡易 glob 評価による目安です（β）');
+		lines.push('', L('※ 簡易 glob 評価による目安です（β）', 'Note: estimate by simple glob matching (beta)'));
 		simBar.tooltip = lines.join('\n');
 		simBar.show();
 	};
@@ -266,7 +268,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				warningMessage = arg.warningMessage;
 			}
 			if (!ruleId) {
-				void vscode.window.showInformationMessage('このノードに警告はありません');
+				void vscode.window.showInformationMessage(L('このノードに警告はありません', 'This node has no warnings'));
 				return;
 			}
 			const query = new URLSearchParams({ rule: ruleId });
@@ -308,7 +310,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			return;
 		}
 		const total = files.reduce((sum, n) => sum + n.ownTokens, 0);
-		statusBar.text = `$(graph-line) 経路合計 ≈${total.toLocaleString()} tok（${files.length}ファイル）`;
+		statusBar.text = `$(graph-line) ${L(`経路合計 ≈${total.toLocaleString()} tok（${files.length}ファイル）`, `Path total ≈${total.toLocaleString()} tok (${files.length} files)`)}`;
 		statusBar.tooltip = files
 			.map((n) => `${path.basename(n.filePath ?? '')}: ≈${n.ownTokens.toLocaleString()} tok`)
 			.join('\n');

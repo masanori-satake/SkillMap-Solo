@@ -1,10 +1,11 @@
 import { RULES, type SkillWarning } from './rules.js';
+import { L } from './i18n.js';
 
 /** Tips 全文を Markdown 文字列として組み立てる（表示層から分離したデータ駆動の生成） */
 export function renderTipMarkdown(ruleId: string, warningMessage?: string): string {
 	const rule = RULES[ruleId];
 	if (!rule) {
-		return `# SkillMap Tips\n\n不明なルールです: ${ruleId}\n`;
+		return `# SkillMap Tips\n\n${L(`不明なルールです: ${ruleId}`, `Unknown rule: ${ruleId}`)}\n`;
 	}
 	const lines: string[] = [
 		`# 💡 SkillMap Tips — ${rule.id}: ${rule.title}`,
@@ -13,17 +14,25 @@ export function renderTipMarkdown(ruleId: string, warningMessage?: string): stri
 	if (warningMessage) {
 		lines.push(`> ⚠ ${warningMessage}`, '');
 	}
-	lines.push('## 原則', '', rule.tip.principle, '', '## 直し方', '', rule.tip.fix, '');
+	lines.push(`## ${L('原則', 'Principle')}`, '', rule.tip.principle, '', `## ${L('直し方', 'How to fix')}`, '', rule.tip.fix, '');
 	if (rule.tip.good || rule.tip.bad) {
-		lines.push('## 例', '');
+		lines.push(`## ${L('例', 'Examples')}`, '');
 		if (rule.tip.bad) {
-			lines.push('悪い例:', '', '```', rule.tip.bad, '```', '');
+			lines.push(`${L('悪い例:', 'Bad:')}`, '', '```', rule.tip.bad, '```', '');
 		}
 		if (rule.tip.good) {
-			lines.push('良い例:', '', '```', rule.tip.good, '```', '');
+			lines.push(`${L('良い例:', 'Good:')}`, '', '```', rule.tip.good, '```', '');
 		}
 	}
-	lines.push('---', '', 'しきい値や警告レベルは settings.json の `skillmap.rules.*` で調整できます。', '');
+	lines.push(
+		'---',
+		'',
+		L(
+			'しきい値や警告レベルは settings.json の `skillmap.rules.*` で調整できます。',
+			'Thresholds and severities can be tuned via `skillmap.rules.*` in settings.json.',
+		),
+		'',
+	);
 	return lines.join('\n');
 }
 

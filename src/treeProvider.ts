@@ -4,6 +4,7 @@ import { layerLabel, type FileGraph, type LogicalSkill, type SkillUnit } from '.
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
+import { L } from './i18n.js';
 
 export type NodeKind =
 	| 'section'
@@ -139,12 +140,18 @@ function countReferences(unit: SkillUnit): Map<string, number> {
 	return result;
 }
 
-const SECTION_LABELS: Record<SectionId, string> = {
-	skills: 'Skills',
-	steering: 'Steering (.kiro/steering)',
-	specs: 'Specs（β）',
-	copilot: 'Copilot instructions',
-};
+function sectionLabel(id: SectionId): string {
+	switch (id) {
+		case 'steering':
+			return 'Steering (.kiro/steering)';
+		case 'specs':
+			return L('Specs（β）', 'Specs (Beta)');
+		case 'copilot':
+			return 'Copilot instructions';
+		default:
+			return 'Skills';
+	}
+}
 
 export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	private _onDidChangeTreeData = new vscode.EventEmitter<MapNode | undefined | void>();
@@ -165,7 +172,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.filePath && node.kind !== 'section') {
 			item.command = {
 				command: 'skillmap.openFile',
-				title: 'ファイルを開く',
+				title: L('ファイルを開く', 'Open File'),
 				arguments: [node],
 			};
 		}
@@ -377,7 +384,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				const missing = new MapNode('missing');
 				missing.specUnit = unit;
 				missing.filePath = f.filePath;
-				missing.labelOverride = `${f.fileName}（欠落）`;
+				missing.labelOverride = `${f.fileName}${L('（欠落）', ' (missing)')}`;
 				missing.parent = node;
 				missing.warnings = this.model.specWarnings.filter((w) => w.file === unit.dir && w.message.includes(f.fileName));
 				return missing;
@@ -409,14 +416,14 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		}
 		switch (node.kind) {
 			case 'section':
-				return SECTION_LABELS[node.sectionId ?? 'skills'];
+				return sectionLabel(node.sectionId ?? 'skills');
 			case 'skill':
 				return node.skill?.name ?? '';
 			case 'orphanGroup':
-				return '未参照ファイル';
+				return L('未参照ファイル', 'Unreferenced files');
 			case 'copy': {
 				const rel = copyRootLabel(node.unit?.dir ?? '');
-				return `複製（${rel}）`;
+				return L(`複製（${rel}）`, `Replica (${rel})`);
 			}
 			case 'steering':
 				return path.basename(node.filePath ?? '');
@@ -425,9 +432,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'copilot':
 				return node.copilotUnit?.name ?? '';
 			case 'missing':
-				return `${path.basename(node.filePath ?? '')} （参照切れ）`;
+				return `${path.basename(node.filePath ?? '')} ${L('（参照切れ）', '(broken reference)')}`;
 			case 'cycle':
-				return `${path.basename(node.filePath ?? '')} （循環）`;
+				return `${path.basename(node.filePath ?? '')} ${L('（循環）', '(cycle)')}`;
 			default:
 				return path.basename(node.filePath ?? '');
 		}
@@ -439,13 +446,13 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'section': {
 				if (node.sectionId === 'steering') {
 					const always = this.model.alwaysSteeringTokens();
-					return `常時ロード合計 ≈${always.toLocaleString()} tok${warn(node.allWarnings().length)}`;
+					return `${L('常時ロード合計', 'Always-loaded total')} ≈${always.toLocaleString()} tok${warn(node.allWarnings().length)}`;
 				}
 				if (node.sectionId === 'skills') {
-					return `${this.model.skills.length}件${warn(node.allWarnings().length)}`;
+					return L(`${this.model.skills.length}件`, `${this.model.skills.length}`) + warn(node.allWarnings().length);
 				}
 				if (node.sectionId === 'specs') {
-					return `${this.model.specs.length}件${warn(node.allWarnings().length)}`;
+					return L(`${this.model.specs.length}件`, `${this.model.specs.length}`) + warn(node.allWarnings().length);
 				}
 				if (node.sectionId === 'copilot') {
 					const total = this.model.copilot.reduce((s, c) => s + c.tokens, 0);
@@ -455,28 +462,28 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			}
 			case 'skill': {
 				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
-				return `合計 ≈${total.toLocaleString()} tok${warn(node.allWarnings().length)}`;
+				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(node.allWarnings().length)}`;
 			}
 			case 'copy':
-				return node.warnings.length > 0 ? `正本と乖離${warn(node.warnings.length)}` : '正本と一致';
+				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(node.warnings.length) : L('正本と一致', 'Matches canonical');
 			case 'orphanGroup':
-				return `${node.children?.length ?? 0}件`;
+				return L(`${node.children?.length ?? 0}件`, `${node.children?.length ?? 0}`);
 			case 'steering': {
 				const u = node.steeringUnit!;
-				const badge = u.inclusion === 'always' ? '常時' : u.inclusion === 'fileMatch' ? '条件' : '手動';
+				const badge = u.inclusion === 'always' ? L('常時', 'always') : u.inclusion === 'fileMatch' ? L('条件', 'conditional') : L('手動', 'manual');
 				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(node.warnings.length)}`;
 			}
 			case 'spec': {
 				const missing = node.specUnit?.files.filter((f) => !f.present).length ?? 0;
-				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? ` · 欠落${missing}` : ''}${warn(node.warnings.length)}`;
+				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? L(` · 欠落${missing}`, ` · ${missing} missing`) : ''}${warn(node.warnings.length)}`;
 			}
 			case 'copilot': {
 				const u = node.copilotUnit!;
-				const mode = u.mode === 'always' ? '常時' : `applyTo: ${u.applyTo ?? '(未指定)'}`;
+				const mode = u.mode === 'always' ? L('常時', 'always') : `applyTo: ${u.applyTo ?? L('(未指定)', '(not set)')}`;
 				return `${mode} · ≈${u.tokens.toLocaleString()} tok`;
 			}
 			case 'missing':
-				return node.specUnit ? '未作成' : '存在しません';
+				return node.specUnit ? L('未作成', 'not created') : L('存在しません', 'does not exist');
 			case 'file':
 			case 'orphan':
 			case 'cycle': {
@@ -487,10 +494,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					parts.push(layerLabel(depth));
 				}
 				if (node.shared) {
-					parts.push('共有');
+					parts.push(L('共有', 'shared'));
 				}
 				if (node.boundary) {
-					parts.push('境界');
+					parts.push(L('境界', 'boundary'));
 				}
 				return parts.join(' · ') + warn(node.warnings.length);
 			}
@@ -569,15 +576,15 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.kind === 'section') {
 			if (node.sectionId === 'steering') {
 				md.appendMarkdown('**Steering (.kiro/steering)**\n\n');
-				md.appendMarkdown(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`);
-				md.appendMarkdown('- Kiro が inclusion 設定に従って自動で読み込むファイルです。Copilot は読みません\n');
+				md.appendMarkdown(L(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`, `- Always-loaded total (inclusion: always): ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`));
+				md.appendMarkdown(L('- Kiro が inclusion 設定に従って自動で読み込むファイルです。Copilot は読みません\n', '- Files Kiro loads automatically according to their inclusion settings. Copilot does not read them.\n'));
 			} else if (node.sectionId === 'copilot') {
 				md.appendMarkdown('**Copilot instructions**\n\n');
-				md.appendMarkdown('- GitHub Copilot が読み込む指示ファイルです（表示専用。ルール適用はしません）\n');
-				md.appendMarkdown('- Kiro は読みません\n');
+				md.appendMarkdown(L('- GitHub Copilot が読み込む指示ファイルです（表示専用。ルール適用はしません）\n', '- Instruction files read by GitHub Copilot (display only; no rules are applied).\n'));
+				md.appendMarkdown(L('- Kiro は読みません\n', '- Kiro does not read them.\n'));
 			} else if (node.sectionId === 'specs') {
-				md.appendMarkdown('**Specs（β）**\n\n');
-				md.appendMarkdown('- .kiro/specs 配下の仕様駆動開発の3点セットです\n');
+				md.appendMarkdown(L('**Specs（β）**\n\n', '**Specs (Beta)**\n\n'));
+				md.appendMarkdown(L('- .kiro/specs 配下の仕様駆動開発の3点セットです\n', '- Spec-driven development trios under .kiro/specs.\n'));
 			} else {
 				md.appendMarkdown('**Skills**\n');
 			}
@@ -588,35 +595,35 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			const unit = node.skill.canonical;
 			const total = totalOwnedTokens(unit);
 			md.appendMarkdown(`**${node.skill.name}**\n\n`);
-			md.appendMarkdown(`- 合計（重複排除）: ≈${total.toLocaleString()} tok\n`);
-			md.appendMarkdown(`- L1（name + description）: ≈${unit.l1Tokens.toLocaleString()} tok\n`);
-			md.appendMarkdown(`- L2（SKILL.md 本文）: ≈${unit.skillMdBodyTokens.toLocaleString()} tok\n`);
+			md.appendMarkdown(L(`- 合計（重複排除）: ≈${total.toLocaleString()} tok\n`, `- Total (de-duplicated): ≈${total.toLocaleString()} tok\n`));
+			md.appendMarkdown(`- L1 (name + description): ≈${unit.l1Tokens.toLocaleString()} tok\n`);
+			md.appendMarkdown(L(`- L2（SKILL.md 本文）: ≈${unit.skillMdBodyTokens.toLocaleString()} tok\n`, `- L2 (SKILL.md body): ≈${unit.skillMdBodyTokens.toLocaleString()} tok\n`));
 			if (unit.steeringAlwaysTokens > 0) {
-				md.appendMarkdown(`- うち .kiro/steering の常時ロード分（inclusion: always）: ≈${unit.steeringAlwaysTokens.toLocaleString()} tok\n`);
+				md.appendMarkdown(L(`- うち .kiro/steering の常時ロード分（inclusion: always）: ≈${unit.steeringAlwaysTokens.toLocaleString()} tok\n`, `- of which always-loaded .kiro/steering (inclusion: always): ≈${unit.steeringAlwaysTokens.toLocaleString()} tok\n`));
 			}
 			if (!node.skill.canonicalExplicit && node.skill.copies.length > 0) {
-				md.appendMarkdown('- 正本の自動判定: canonicalRoots に一致する配置が無いため、先頭の配置を代表としています\n');
+				md.appendMarkdown(L('- 正本の自動判定: canonicalRoots に一致する配置が無いため、先頭の配置を代表としています\n', '- Canonical auto-detection: no location matches canonicalRoots, so the first location is treated as the representative.\n'));
 			}
 			this.appendWarnings(md, node.allWarnings().filter((w) => w.copyDir === undefined).slice(0, 10));
 			return md;
 		}
 		if (node.kind === 'copy') {
-			md.appendMarkdown(`**複製**: ${node.unit?.dir ?? ''}\n\n`);
-			md.appendMarkdown('警告ルールは正本にのみ適用されます。複製にはドリフトチェック（R11）のみが適用されます。\n');
+			md.appendMarkdown(`**${L('複製', 'Replica')}**: ${node.unit?.dir ?? ''}\n\n`);
+			md.appendMarkdown(L('警告ルールは正本にのみ適用されます。複製にはドリフトチェック（R11）のみが適用されます。\n', 'Warning rules apply to the canonical source only. Replicas get the drift check (R11) only.\n'));
 			this.appendWarnings(md, node.warnings);
 			return md;
 		}
 		if (node.kind === 'steering' && node.steeringUnit) {
 			const u = node.steeringUnit;
 			md.appendMarkdown(`**${u.filePath}**\n\n`);
-			md.appendMarkdown(`- inclusion: ${u.inclusion}${u.inclusionExplicit ? '' : '（未指定＝常時扱い）'}\n`);
+			md.appendMarkdown(`- inclusion: ${u.inclusion}${u.inclusionExplicit ? '' : L('（未指定＝常時扱い）', ' (not specified = treated as always)')}\n`);
 			if (u.fileMatchPattern) {
 				md.appendMarkdown(`- fileMatchPattern: \`${u.fileMatchPattern}\`\n`);
 			}
-			md.appendMarkdown(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`);
-			md.appendMarkdown('- Kiro: inclusion に従って自動ロード ／ Copilot: 読まれない\n');
+			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
+			md.appendMarkdown(L('- Kiro: inclusion に従って自動ロード ／ Copilot: 読まれない\n', '- Kiro: auto-loaded per inclusion / Copilot: not loaded\n'));
 			if (u.canonicalCounterpart) {
-				md.appendMarkdown(`- 正本: ${u.canonicalCounterpart}\n`);
+				md.appendMarkdown(`- ${L('正本', 'Canonical')}: ${u.canonicalCounterpart}\n`);
 			}
 			this.appendWarnings(md, node.warnings);
 			return md;
@@ -624,7 +631,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.kind === 'spec' && node.specUnit) {
 			md.appendMarkdown(`**Spec: ${node.specUnit.name}**\n\n`);
 			for (const f of node.specUnit.files) {
-				md.appendMarkdown(`- ${f.fileName}: ${f.present ? `≈${f.tokens.toLocaleString()} tok` : '欠落'}\n`);
+				md.appendMarkdown(`- ${f.fileName}: ${f.present ? `≈${f.tokens.toLocaleString()} tok` : L('欠落', 'missing')}\n`);
 			}
 			this.appendWarnings(md, node.warnings);
 			return md;
@@ -632,31 +639,31 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.kind === 'copilot' && node.copilotUnit) {
 			const u = node.copilotUnit;
 			md.appendMarkdown(`**${u.filePath}**\n\n`);
-			md.appendMarkdown(`- 読み込み: ${u.mode === 'always' ? '常時（Copilot）' : `applyTo: ${u.applyTo ?? '(未指定)'}`}\n`);
-			md.appendMarkdown(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`);
-			md.appendMarkdown('- Copilot: 読み込む ／ Kiro: 読まれない\n');
+			md.appendMarkdown(L(`- 読み込み: ${u.mode === 'always' ? '常時（Copilot）' : `applyTo: ${u.applyTo ?? '(未指定)'}`}\n`, `- Loading: ${u.mode === 'always' ? 'always (Copilot)' : `applyTo: ${u.applyTo ?? '(not set)'}`}\n`));
+			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
+			md.appendMarkdown(L('- Copilot: 読み込む ／ Kiro: 読まれない\n', '- Copilot: loaded / Kiro: not loaded\n'));
 			return md;
 		}
 		if (node.kind === 'orphanGroup') {
-			md.appendMarkdown('スキル内に存在しますが、どこからも参照されていないファイルです。\n');
+			md.appendMarkdown(L('スキル内に存在しますが、どこからも参照されていないファイルです。\n', 'Files that exist inside the skill but are not referenced from anywhere.\n'));
 			return md;
 		}
 		md.appendMarkdown(`**${node.filePath}**\n\n`);
 		const own = node.ownTokens;
 		const subtree = node.subtreeTokens();
 		const pathFiles = node.pathFiles();
-		md.appendMarkdown(`- このファイル: ≈${own.toLocaleString()} tok\n`);
+		md.appendMarkdown(L(`- このファイル: ≈${own.toLocaleString()} tok\n`, `- This file: ≈${own.toLocaleString()} tok\n`));
 		if (subtree !== own) {
-			md.appendMarkdown(`- 配下合計（重複排除）: ≈${subtree.toLocaleString()} tok\n`);
+			md.appendMarkdown(L(`- 配下合計（重複排除）: ≈${subtree.toLocaleString()} tok\n`, `- Subtree total (de-duplicated): ≈${subtree.toLocaleString()} tok\n`));
 		}
 		if (pathFiles.length > 1) {
-			md.appendMarkdown(`- 経路合計: ≈${node.pathTokens().toLocaleString()} tok（${pathFiles.length}ファイル）\n`);
+			md.appendMarkdown(L(`- 経路合計: ≈${node.pathTokens().toLocaleString()} tok（${pathFiles.length}ファイル）\n`, `- Path total: ≈${node.pathTokens().toLocaleString()} tok (${pathFiles.length} files)\n`));
 		}
 		if (node.shared) {
-			md.appendMarkdown('- 共有: 複数のファイルから参照されています\n');
+			md.appendMarkdown(L('- 共有: 複数のファイルから参照されています\n', '- Shared: referenced from multiple files.\n'));
 		}
 		if (node.boundary) {
-			md.appendMarkdown('- 境界: 配置ディレクトリの外のファイルです。表示と構造チェックのみ対象です\n');
+			md.appendMarkdown(L('- 境界: 配置ディレクトリの外のファイルです。表示と構造チェックのみ対象です\n', '- Boundary: a file outside the owning directory. Display and structural checks only.\n'));
 		}
 		this.appendWarnings(md, node.warnings);
 		return md;
@@ -666,13 +673,13 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (warnings.length === 0) {
 			return;
 		}
-		md.appendMarkdown('\n**警告**\n\n');
+		md.appendMarkdown(L('\n**警告**\n\n', '\n**Warnings**\n\n'));
 		for (const w of warnings) {
 			const icon = w.severity === 'error' ? '🔴' : w.severity === 'warn' ? '🟡' : '🔵';
 			md.appendMarkdown(`${icon} **${w.ruleId}** ${w.message}\n`);
 			const summary = renderTipSummary(w.ruleId);
 			if (summary) {
-				md.appendMarkdown(`　💡 ${summary} [Tips全文](${tipCommandUri(w.ruleId, w.message)})\n`);
+				md.appendMarkdown(`　💡 ${summary} [${L('Tips全文', 'Full Tip')}](${tipCommandUri(w.ruleId, w.message)})\n`);
 			}
 			void RULES;
 		}
