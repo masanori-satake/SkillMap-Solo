@@ -119,12 +119,12 @@ export function listFilesRecursive(dir: string, depth: number, out: string[]): v
 	}
 }
 
-/** ワークスペース配下から SKILL.md を持つディレクトリを探す */
-export function findSkillDirs(workspaceRoots: string[], extraRoots: string[]): string[] {
+/** ワークスペース配下から SKILL.md を持つディレクトリを探す。
+ * knownFiles（ルート→全ファイル）が渡された場合は走査を再利用し、二度歩かない */
+export function findSkillDirs(workspaceRoots: string[], extraRoots: string[], knownFiles?: Map<string, string[]>): string[] {
 	const found = new Set<string>();
 	const scan = (root: string) => {
-		const files: string[] = [];
-		listFilesRecursive(root, 0, files);
+		const files = knownFiles?.get(root) ?? listAllFiles(root);
 		for (const f of files) {
 			if (path.basename(f) === 'SKILL.md') {
 				found.add(path.dirname(f));
@@ -190,18 +190,21 @@ export interface ResolutionContext {
 	byBasename: Map<string, string[]>;
 }
 
-export function buildResolutionContext(bases: string[], indexRoots: string[]): ResolutionContext {
+export function buildResolutionContext(bases: string[], indexFiles: string[]): ResolutionContext {
 	const byBasename = new Map<string, string[]>();
-	for (const root of indexRoots) {
-		const files: string[] = [];
-		listFilesRecursive(root, 0, files);
-		for (const f of files) {
-			const arr = byBasename.get(path.basename(f)) ?? [];
-			arr.push(f);
-			byBasename.set(path.basename(f), arr);
-		}
+	for (const f of indexFiles) {
+		const arr = byBasename.get(path.basename(f)) ?? [];
+		arr.push(f);
+		byBasename.set(path.basename(f), arr);
 	}
 	return { bases: [...new Set(bases.filter(Boolean))], byBasename };
+}
+
+/** フォルダ配下の全ファイル（絶対パス）を再帰的に列挙する */
+export function listAllFiles(root: string): string[] {
+	const files: string[] = [];
+	listFilesRecursive(root, 0, files);
+	return files;
 }
 
 function existsOnDisk(p: string): boolean {
@@ -300,6 +303,61 @@ export function extractReferences(fromFile: string, text: string, resCtx?: Resol
 	return edges;
 }
 
+// ファイル内容のキャッシュ。再スキャンのたびに全ファイルを読み直すと大きな
+// ワークスペースで応答が落ちるため、mtime とサイズが一致する間は内容・トークン数・
+// ハッシュを再利用する。参照（refs）は解決コンテキストに依存するためキャッシュせず、
+// 毎回テキストから抽出し直す（解決結果が古くならないように）。
+interface ContentCacheEntry {
+	mtimeMs: number;
+	size: number;
+	/** テキストとして読めた場合の内容。バイナリは undefined */
+	text?: string;
+	tokens: number;
+	lines: number;
+	hash: string;
+}
+
+const contentCache = new Map<string, ContentCacheEntry>();
+const CONTENT_CACHE_LIMIT = 5000;
+
+function contentOf(absPath: string, st: fs.Stats): ContentCacheEntry {
+	const hit = contentCache.get(absPath);
+	if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+		return hit;
+	}
+	const buf = fs.readFileSync(absPath);
+	const entry: ContentCacheEntry = {
+		mtimeMs: st.mtimeMs,
+		size: st.size,
+		tokens: 0,
+		lines: 0,
+		hash: crypto.createHash('sha1').update(buf).digest('hex'),
+	};
+	if (isProbablyText(buf)) {
+		entry.text = buf.toString('utf8');
+		entry.tokens = estimateTokens(entry.text);
+		entry.lines = countLines(entry.text);
+	}
+	if (contentCache.size >= CONTENT_CACHE_LIMIT) {
+		contentCache.clear();
+	}
+	contentCache.set(absPath, entry);
+	return entry;
+}
+
+/** ファイルの SHA-1（内容キャッシュと共有し、未変更なら再読み込みしない） */
+export function fileHash(absPath: string): string | undefined {
+	try {
+		const st = fs.statSync(absPath);
+		if (st.isDirectory()) {
+			return undefined;
+		}
+		return contentOf(absPath, st).hash;
+	} catch {
+		return undefined;
+	}
+}
+
 export function readFileInfo(absPath: string, skillDir: string, resCtx?: ResolutionContext): FileInfo {
 	const relToSkill = path.relative(skillDir, absPath);
 	const boundary = relToSkill.startsWith('..' + path.sep) || path.isAbsolute(relToSkill);
@@ -314,11 +372,11 @@ export function readFileInfo(absPath: string, skillDir: string, resCtx?: Resolut
 		exists = true;
 		isDirectory = st.isDirectory();
 		if (!isDirectory) {
-			const buf = fs.readFileSync(absPath);
-			if (isProbablyText(buf)) {
-				text = buf.toString('utf8');
-				tokens = estimateTokens(text);
-				lines = countLines(text);
+			const entry = contentOf(absPath, st);
+			text = entry.text;
+			tokens = entry.tokens;
+			lines = entry.lines;
+			if (text !== undefined) {
 				refs = extractReferences(absPath, text, resCtx);
 			}
 		}
@@ -330,8 +388,10 @@ export function readFileInfo(absPath: string, skillDir: string, resCtx?: Resolut
 
 export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 	const skillMdPath = path.join(skillDir, 'SKILL.md');
+	// スキル内の全ファイルは1回だけ列挙し、解決索引・ハッシュ・孤立検出で共有する
+	const diskAbs = listAllFiles(skillDir);
 	// 解決の追加起点はスキルルートと所属フォルダ。同名索引はスキル内ファイルから作る
-	const resCtx = buildResolutionContext([skillDir, sourceRoot], [skillDir]);
+	const resCtx = buildResolutionContext([skillDir, sourceRoot], diskAbs);
 	const skillInfo = readFileInfo(skillMdPath, skillDir, resCtx);
 	const content = skillInfo.text ?? '';
 	const frontmatter = parseFrontmatter(content);
@@ -388,16 +448,12 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 		}
 	}
 
-	// スキル内の全ファイル（孤立検出・ハッシュ用）
-	const diskAbs: string[] = [];
-	listFilesRecursive(skillDir, 0, diskAbs);
+	// ハッシュは内容キャッシュ経由で取得する（未変更ファイルは再読み込みしない）
 	const fileHashes = new Map<string, string>();
 	for (const abs of diskAbs) {
-		try {
-			const buf = fs.readFileSync(abs);
-			fileHashes.set(path.relative(skillDir, abs), crypto.createHash('sha1').update(buf).digest('hex'));
-		} catch {
-			// 読めないファイルは無視
+		const hash = fileHash(abs);
+		if (hash !== undefined) {
+			fileHashes.set(path.relative(skillDir, abs), hash);
 		}
 	}
 	const orphans = diskAbs

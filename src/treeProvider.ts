@@ -97,10 +97,23 @@ export class MapNode {
 	}
 
 	allWarnings(): SkillWarning[] {
-		const out = [...this.warnings];
-		for (const child of this.children ?? []) {
-			out.push(...child.allWarnings());
-		}
+		// 同じ警告がファイルノードとその未解決プレースホルダーの両方に付くことが
+		// あるため、集計では同一の警告を1回だけ数える（二重数えの防止）
+		const seen = new Set<string>();
+		const out: SkillWarning[] = [];
+		const visit = (node: MapNode): void => {
+			for (const w of node.warnings) {
+				const key = `${w.ruleId}|${w.file}|${w.line ?? ''}|${w.target ?? ''}|${w.message}`;
+				if (!seen.has(key)) {
+					seen.add(key);
+					out.push(w);
+				}
+			}
+			for (const child of node.children ?? []) {
+				visit(child);
+			}
+		};
+		visit(this);
 		return out;
 	}
 

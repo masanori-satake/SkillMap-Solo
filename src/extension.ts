@@ -1,12 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { buildUnit, findSkillDirs, groupSkills, scopeRootFor } from './skills.js';
+import { buildUnit, findSkillDirs, groupSkills, listAllFiles, scopeRootFor } from './skills.js';
 import {
 	discoverCopilot,
 	discoverSpecs,
 	discoverSteering,
-	listWorkspaceRelPaths,
 	simulateLoad,
 } from './contexts.js';
 import {
@@ -202,6 +201,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		void vscode.commands.executeCommand('setContext', 'skillmap.multiRoot', workspaceRoots.length > 1);
 		// 絞り込み中は対象フォルダだけを走査する（表示量と走査コストの両方を減らす）
 		const scanRoots = rootFilter ? [rootFilter] : workspaceRoots;
+		// フォルダ内の全ファイルは rebuild につき1回だけ列挙し、発見・解決索引・
+		// パターン評価で共有する（以前は処理ごとに歩き直して応答を落としていた）
+		const knownFiles = new Map(scanRoots.map((r) => [r, listAllFiles(r)] as const));
 		// 追加の探索ルート: 相対指定は各ワークスペースフォルダごとに解決する（マルチルート対応）
 		const extraRoots: string[] = [];
 		for (const r of settings.skillsRoots) {
@@ -214,7 +216,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 		}
 		// Skills（グルーピングのスコープは scopeRootFor: フォルダ内はフォルダ単位に揃える）
-		const dirs = findSkillDirs(scanRoots, extraRoots);
+		const dirs = findSkillDirs(scanRoots, extraRoots, knownFiles);
 		const units = dirs.map((d) => buildUnit(d, scopeRootFor(d, workspaceRoots, extraRoots)));
 		const skills = groupSkills(units, settings.canonicalRoots);
 		const skillWarnings = new Map<string, SkillWarning[]>();
@@ -225,12 +227,21 @@ export function activate(context: vscode.ExtensionContext): void {
 			allWarnings.push(...w);
 		}
 		// Steering / Specs / Copilot
-		const steering = discoverSteering(scanRoots, settings.canonicalRoots);
-		const relPathsByRoot = new Map(scanRoots.map((r) => [r, listWorkspaceRelPaths([r])]));
+		const steering = discoverSteering(scanRoots, settings.canonicalRoots, knownFiles);
+		// 相対パス一覧は fileMatch な Steering の死パターン判定（S2）でしか使わない。
+		// 必要なときだけ作る（全ファイル分の変換は走査と同程度に重いため）
+		const relPathsByRoot = steering.some((u) => u.inclusion === 'fileMatch')
+			? new Map(
+					scanRoots.map((r) => [
+						r,
+						(knownFiles.get(r) ?? []).slice(0, 30000).map((f) => path.relative(r, f).split(path.sep).join('/')),
+					]),
+				)
+			: new Map<string, string[]>();
 		const steeringWarnings = evaluateSteering(steering, relPathsByRoot, settings.rules);
-		const specs = discoverSpecs(scanRoots);
+		const specs = discoverSpecs(scanRoots, knownFiles);
 		const specWarnings = evaluateSpecs(specs);
-		const copilot = discoverCopilot(scanRoots);
+		const copilot = discoverCopilot(scanRoots, knownFiles);
 		allWarnings.push(...steeringWarnings, ...specWarnings);
 
 		model.skills = skills;
