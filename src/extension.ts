@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { buildUnit, findSkillDirs, groupSkills } from './skills.js';
+import { buildUnit, findSkillDirs, groupSkills, scopeRootFor } from './skills.js';
 import {
 	discoverCopilot,
 	discoverSpecs,
@@ -193,21 +193,9 @@ export function activate(context: vscode.ExtensionContext): void {
 				}
 			}
 		}
-		const searchRoots = [...workspaceRoots, ...extraRoots];
-		// ディレクトリが属する探索ルート（最長一致）。グルーピングの単位になる
-		const rootOf = (dir: string): string => {
-			let best = '';
-			for (const r of searchRoots) {
-				const prefix = r.endsWith(path.sep) ? r : r + path.sep;
-				if ((dir === r || dir.startsWith(prefix)) && r.length > best.length) {
-					best = r;
-				}
-			}
-			return best;
-		};
-		// Skills
+		// Skills（グルーピングのスコープは scopeRootFor: フォルダ内はフォルダ単位に揃える）
 		const dirs = findSkillDirs(workspaceRoots, extraRoots);
-		const units = dirs.map((d) => buildUnit(d, rootOf(d)));
+		const units = dirs.map((d) => buildUnit(d, scopeRootFor(d, workspaceRoots, extraRoots)));
 		const skills = groupSkills(units, settings.canonicalRoots);
 		const skillWarnings = new Map<string, SkillWarning[]>();
 		const allWarnings: SkillWarning[] = [];

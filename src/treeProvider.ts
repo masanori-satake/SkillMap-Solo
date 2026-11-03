@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { layerLabel, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
+import { layerLabel, rootLabels, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
@@ -111,10 +111,6 @@ export class SkillMapModel {
 	copilot: CopilotUnit[] = [];
 	betaSpecs = true;
 
-	get steeringDir(): string | undefined {
-		return this.steering[0] ? path.dirname(this.steering[0].filePath) : undefined;
-	}
-
 	alwaysSteeringTokens(): number {
 		return this.steering
 			.filter((s) => s.inclusion === 'always')
@@ -208,8 +204,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			sections.push(make('skills', this.model.skills.map((s) => this.buildSkillRoot(s))));
 		}
 		if (this.model.steering.length > 0) {
-			const dir = this.model.steeringDir;
-			const sectionWarnings = this.model.steeringWarnings.filter((w) => w.file === dir);
+			// S3 はフォルダごとに生成される（file = 各フォルダの steering ディレクトリ）。
+			// Diagnostics には出さない警告のため、全フォルダ分をここで集めないと見えなくなる
+			const sectionWarnings = this.model.steeringWarnings.filter((w) => w.ruleId === 'S3');
 			sections.push(make('steering', this.model.steering.map((s) => this.buildSteeringNode(s)), sectionWarnings));
 		}
 		if (this.model.betaSpecs && this.model.specs.length > 0) {
@@ -442,9 +439,15 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 
 	private descriptionFor(node: MapNode): string | undefined {
 		const warn = (n: number) => (n > 0 ? ` ⚠${n}` : '');
-		// マルチルートで同名が複数あるときだけ、所属フォルダ名を付けて見分けられるようにする
-		const folderTag = (name: string, root: string, names: string[]): string =>
-			root && names.filter((x) => x === name).length > 1 ? ` · ${path.basename(root)}` : '';
+		// マルチルートで同名が複数あるときだけ、所属フォルダの表示名を付けて見分けられるようにする
+		const folderTag = (name: string, root: string, items: Array<{ name: string; root: string }>): string => {
+			const same = items.filter((x) => x.name === name);
+			if (!root || same.length <= 1) {
+				return '';
+			}
+			const labels = rootLabels(same.map((x) => x.root));
+			return ` · ${labels.get(root) ?? path.basename(root)}`;
+		};
 		switch (node.kind) {
 			case 'section': {
 				if (node.sectionId === 'steering') {
@@ -470,7 +473,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			}
 			case 'skill': {
 				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
-				const tag = node.skill ? folderTag(node.skill.name, node.skill.canonical.sourceRoot, this.model.skills.map((s) => s.name)) : '';
+				const tag = node.skill ? folderTag(node.skill.name, node.skill.canonical.sourceRoot, this.model.skills.map((s) => ({ name: s.name, root: s.canonical.sourceRoot }))) : '';
 				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(node.allWarnings().length)}${tag}`;
 			}
 			case 'copy':
@@ -480,17 +483,17 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'steering': {
 				const u = node.steeringUnit!;
 				const badge = u.inclusion === 'always' ? L('常時', 'always') : u.inclusion === 'fileMatch' ? L('条件', 'conditional') : L('手動', 'manual');
-				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(node.warnings.length)}${folderTag(u.name, u.workspaceRoot, this.model.steering.map((x) => x.name))}`;
+				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(node.warnings.length)}${folderTag(u.name, u.workspaceRoot, this.model.steering.map((x) => ({ name: x.name, root: x.workspaceRoot })))}`;
 			}
 			case 'spec': {
 				const missing = node.specUnit?.files.filter((f) => !f.present).length ?? 0;
-				const tag = node.specUnit ? folderTag(node.specUnit.name, node.specUnit.workspaceRoot, this.model.specs.map((x) => x.name)) : '';
+				const tag = node.specUnit ? folderTag(node.specUnit.name, node.specUnit.workspaceRoot, this.model.specs.map((x) => ({ name: x.name, root: x.workspaceRoot }))) : '';
 				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? L(` · 欠落${missing}`, ` · ${missing} missing`) : ''}${warn(node.warnings.length)}${tag}`;
 			}
 			case 'copilot': {
 				const u = node.copilotUnit!;
 				const mode = u.mode === 'always' ? L('常時', 'always') : `applyTo: ${u.applyTo ?? L('(未指定)', '(not set)')}`;
-				return `${mode} · ≈${u.tokens.toLocaleString()} tok${folderTag(u.name, u.workspaceRoot, this.model.copilot.map((x) => x.name))}`;
+				return `${mode} · ≈${u.tokens.toLocaleString()} tok${folderTag(u.name, u.workspaceRoot, this.model.copilot.map((x) => ({ name: x.name, root: x.workspaceRoot })))}`;
 			}
 			case 'missing':
 				return node.specUnit ? L('未作成', 'not created') : L('存在しません', 'does not exist');
@@ -589,11 +592,12 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				const roots = new Set(this.model.steering.map((u) => u.workspaceRoot));
 				if (roots.size > 1) {
 					// マルチルート時はフォルダごとの常時ロード合計を示す
+					const labels = rootLabels([...roots]);
 					for (const root of roots) {
 						const total = this.model.steering
 							.filter((u) => u.workspaceRoot === root && u.inclusion === 'always')
 							.reduce((s, u) => s + u.tokens, 0);
-						md.appendMarkdown(`- ${path.basename(root)}: ${L('常時ロード合計', 'Always-loaded total')} ≈${total.toLocaleString()} tok\n`);
+						md.appendMarkdown(`- ${labels.get(root) ?? path.basename(root)}: ${L('常時ロード合計', 'Always-loaded total')} ≈${total.toLocaleString()} tok\n`);
 					}
 				} else {
 					md.appendMarkdown(L(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`, `- Always-loaded total (inclusion: always): ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`));

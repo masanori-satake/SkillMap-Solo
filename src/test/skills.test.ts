@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildUnit, findSkillDirs, groupSkills } from '../skills.js';
+import { buildUnit, findSkillDirs, groupSkills, rootLabels, scopeRootFor } from '../skills.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
@@ -142,6 +142,27 @@ test('マルチルート: 別フォルダの同名スキルは統合されず、
 	const s2 = warnings.filter((w) => w.ruleId === 'S2');
 	assert.equal(s2.length, 1, 'B のパターンは B 内に一致が無いので S2（A の同名パスに誤一致しない）');
 	assert.ok(s2[0].file.startsWith(rootB));
+});
+
+test('scopeRootFor と rootLabels: スコープ決定と同名フォルダの区別', () => {
+	const ws = path.join(path.sep, 'ws');
+	const extraInWs = path.join(ws, '.github', 'skills');
+	// フォルダ内の追加ルート配下でも、スコープはワークスペースフォルダ（正本と分割しない）
+	assert.equal(scopeRootFor(path.join(extraInWs, 'demo'), [ws], [extraInWs]), ws);
+	// フォルダ外の追加ルートはそのルート自体がスコープ
+	const outside = path.join(path.sep, 'shared', 'skills');
+	assert.equal(scopeRootFor(path.join(outside, 'demo'), [ws], [outside]), outside);
+	// 入れ子のフォルダでは内側を優先
+	const inner = path.join(ws, 'sub');
+	assert.equal(scopeRootFor(path.join(inner, 'x'), [ws, inner], []), inner);
+	// どこにも属さなければ空
+	assert.equal(scopeRootFor(path.join(path.sep, 'elsewhere', 'x'), [ws], []), '');
+
+	// 同名フォルダは親パスを足して区別する
+	const labels = rootLabels(['/work/client/app', '/work/server/app', '/work/unique']);
+	assert.equal(labels.get('/work/client/app'), 'client/app');
+	assert.equal(labels.get('/work/server/app'), 'server/app');
+	assert.equal(labels.get('/work/unique'), 'unique');
 });
 
 test('frontmatter の文字種・サイズ: ハイフン位置と compatibility 上限を検出する', () => {
