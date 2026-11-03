@@ -46,8 +46,21 @@
         "title": "%command.expandAll%"
       },
       {
+        "command": "skillmap.copyTree",
+        "title": "%command.copyTree%",
+        "category": "SkillMap",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "skillmap.copyVisibleTree",
+        "title": "%command.copyVisibleTree%",
+        "category": "SkillMap",
+        "icon": "$(clippy)"
+      },
+      {
         "command": "skillmap.selectRoot",
         "title": "%command.selectRoot%",
+        "category": "SkillMap",
         "icon": "$(list-filter)"
       }
     ],
@@ -72,6 +85,15 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "skillmap.copyTreeStyle": {
+          "type": "string",
+          "enum": [
+            "unicode",
+            "ascii"
+          ],
+          "default": "unicode",
+          "description": "%config.copyTreeStyle%"
         },
         "skillmap.rules.descriptionMaxLength": {
           "default": 1024,
@@ -146,27 +168,39 @@
       "view/title": [
         {
           "command": "skillmap.refresh",
-          "group": "navigation",
+          "group": "navigation@1",
           "order": 1,
           "when": "view == skillmap-view"
         },
         {
           "command": "skillmap.showLoadMatrix",
-          "group": "navigation",
+          "group": "navigation@2",
           "order": 2,
           "when": "view == skillmap-view"
         },
         {
-          "command": "skillmap.expandAll",
-          "group": "navigation",
+          "command": "skillmap.selectRoot",
+          "group": "navigation@3",
           "order": 3,
-          "when": "view == skillmap-view"
+          "when": "view == skillmap-view && skillmap.multiRoot"
         },
         {
-          "command": "skillmap.selectRoot",
-          "group": "navigation",
-          "order": 4,
-          "when": "view == skillmap-view && skillmap.multiRoot"
+          "command": "skillmap.copyTree",
+          "when": "view == skillmap-view",
+          "group": "navigation@4",
+          "order": 4
+        },
+        {
+          "command": "skillmap.copyVisibleTree",
+          "when": "view == skillmap-view",
+          "group": "navigation@5",
+          "order": 5
+        },
+        {
+          "command": "skillmap.expandAll",
+          "group": "navigation@6",
+          "order": 6,
+          "when": "view == skillmap-view"
         }
       ]
     },
@@ -231,5 +265,5 @@
     "vscode:prepublish": "node esbuild.js --production",
     "watch": "node esbuild.js --watch"
   },
-  "version": "1.6.1"
+  "version": "1.7.0"
 }
