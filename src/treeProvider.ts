@@ -152,11 +152,26 @@ function sectionLabel(id: SectionId): string {
 export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	private _onDidChangeTreeData = new vscode.EventEmitter<MapNode | undefined | void>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+	/** 直近に構築したセクション（すべて展開の走査用） */
+	private sections: MapNode[] = [];
 
 	constructor(private model: SkillMapModel) {}
 
 	refresh(): void {
 		this._onDidChangeTreeData.fire();
+	}
+
+	/** 「すべて展開」: 子を持つ全ノードを上位から順に展開する（標準の「すべて折りたたむ」の対） */
+	async expandAll(treeView: vscode.TreeView<MapNode>): Promise<void> {
+		const walk = (n: MapNode): MapNode[] => [n, ...(n.children ?? []).flatMap(walk)];
+		const expandable = this.sections.flatMap(walk).filter((n) => (n.children?.length ?? 0) > 0);
+		for (const n of expandable) {
+			try {
+				await treeView.reveal(n, { expand: true, select: false, focus: false });
+			} catch {
+				// 表示されていないノード等で失敗しても他を続行する
+			}
+		}
 	}
 
 	getTreeItem(node: MapNode): vscode.TreeItem {
@@ -177,7 +192,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 
 	getChildren(node?: MapNode): MapNode[] {
 		if (!node) {
-			return this.buildSections();
+			this.sections = this.buildSections();
+			return this.sections;
 		}
 		return node.children ?? [];
 	}
