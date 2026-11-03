@@ -142,20 +142,25 @@ export function activate(context: vscode.ExtensionContext): void {
 			return;
 		}
 		const editor = vscode.window.activeTextEditor;
-		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-		if (!editor || !workspaceRoot) {
+		// マルチルート対応: 開いているファイルが所属するフォルダを基準にする
+		const folder = editor ? vscode.workspace.getWorkspaceFolder(editor.document.uri) : undefined;
+		if (!editor || !folder) {
 			simBar.hide();
 			return;
 		}
+		const workspaceRoot = folder.uri.fsPath;
 		const rel = path.relative(workspaceRoot, editor.document.uri.fsPath).split(path.sep).join('/');
 		if (rel.startsWith('..')) {
 			simBar.hide();
 			return;
 		}
-		const sim = simulateLoad(rel, model.steering, model.copilot);
+		// 対象は所属フォルダの Steering / Copilot のみ（他フォルダの分は読み込まれない）
+		const steering = model.steering.filter((u) => u.workspaceRoot === workspaceRoot);
+		const copilot = model.copilot.filter((u) => u.workspaceRoot === workspaceRoot);
+		const sim = simulateLoad(rel, steering, copilot);
 		const kiroTotal = sim.kiro.reduce((s, x) => s + x.tokens, 0);
 		const copTotal = sim.copilot.reduce((s, x) => s + x.tokens, 0);
-		if (model.steering.length === 0 && model.copilot.length === 0) {
+		if (steering.length === 0 && copilot.length === 0) {
 			simBar.hide();
 			return;
 		}
@@ -177,12 +182,32 @@ export function activate(context: vscode.ExtensionContext): void {
 		currentSettings = readSettings();
 		const settings = currentSettings;
 		const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-		const extraRoots = settings.skillsRoots.map((r) =>
-			path.isAbsolute(r) ? r : path.join(workspaceRoots[0] ?? '', r),
-		);
+		// 追加の探索ルート: 相対指定は各ワークスペースフォルダごとに解決する（マルチルート対応）
+		const extraRoots: string[] = [];
+		for (const r of settings.skillsRoots) {
+			if (path.isAbsolute(r)) {
+				extraRoots.push(r);
+			} else {
+				for (const w of workspaceRoots) {
+					extraRoots.push(path.join(w, r));
+				}
+			}
+		}
+		const searchRoots = [...workspaceRoots, ...extraRoots];
+		// ディレクトリが属する探索ルート（最長一致）。グルーピングの単位になる
+		const rootOf = (dir: string): string => {
+			let best = '';
+			for (const r of searchRoots) {
+				const prefix = r.endsWith(path.sep) ? r : r + path.sep;
+				if ((dir === r || dir.startsWith(prefix)) && r.length > best.length) {
+					best = r;
+				}
+			}
+			return best;
+		};
 		// Skills
 		const dirs = findSkillDirs(workspaceRoots, extraRoots);
-		const units = dirs.map((d) => buildUnit(d));
+		const units = dirs.map((d) => buildUnit(d, rootOf(d)));
 		const skills = groupSkills(units, settings.canonicalRoots);
 		const skillWarnings = new Map<string, SkillWarning[]>();
 		const allWarnings: SkillWarning[] = [];
@@ -193,8 +218,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		// Steering / Specs / Copilot
 		const steering = discoverSteering(workspaceRoots, settings.canonicalRoots);
-		const relPaths = listWorkspaceRelPaths(workspaceRoots);
-		const steeringWarnings = evaluateSteering(steering, relPaths, settings.rules);
+		const relPathsByRoot = new Map(workspaceRoots.map((r) => [r, listWorkspaceRelPaths([r])]));
+		const steeringWarnings = evaluateSteering(steering, relPathsByRoot, settings.rules);
 		const specs = discoverSpecs(workspaceRoots);
 		const specWarnings = evaluateSpecs(specs);
 		const copilot = discoverCopilot(workspaceRoots);
@@ -346,6 +371,8 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 		}),
 		vscode.window.onDidChangeActiveTextEditor(() => updateSimulation()),
+		// マルチルート: フォルダの追加・削除に追随して再スキャンする
+		vscode.workspace.onDidChangeWorkspaceFolders(() => scheduleRefresh()),
 	);
 
 	rebuild();

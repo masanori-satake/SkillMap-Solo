@@ -17,6 +17,8 @@ export type Inclusion = 'always' | 'fileMatch' | 'manual';
 export interface SteeringUnit {
 	kind: 'steering';
 	filePath: string;
+	/** 所属するワークスペースフォルダ（マルチルート判定用） */
+	workspaceRoot: string;
 	name: string;
 	inclusion: Inclusion;
 	/** inclusion が frontmatter に明示されていたか */
@@ -33,6 +35,8 @@ export interface SteeringUnit {
 export interface SpecUnit {
 	kind: 'spec';
 	name: string;
+	/** 所属するワークスペースフォルダ（マルチルート判定用） */
+	workspaceRoot: string;
 	dir: string;
 	files: Array<{
 		role: 'requirements' | 'design' | 'tasks';
@@ -48,6 +52,8 @@ export interface SpecUnit {
 export interface CopilotUnit {
 	kind: 'copilot';
 	filePath: string;
+	/** 所属するワークスペースフォルダ（マルチルート判定用） */
+	workspaceRoot: string;
 	name: string;
 	/** 'always' = copilot-instructions.md / AGENTS.md, 'applyTo' = instructions ファイル */
 	mode: 'always' | 'applyTo';
@@ -108,6 +114,7 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 			units.push({
 				kind: 'steering',
 				filePath,
+				workspaceRoot: root,
 				name: path.basename(filePath, '.md'),
 				inclusion,
 				inclusionExplicit: rawInclusion.length > 0,
@@ -161,6 +168,7 @@ export function discoverSpecs(workspaceRoots: string[]): SpecUnit[] {
 			units.push({
 				kind: 'spec',
 				name: entry.name,
+				workspaceRoot: root,
 				dir,
 				files,
 				totalTokens: files.reduce((s, f) => s + f.tokens, 0),
@@ -173,13 +181,14 @@ export function discoverSpecs(workspaceRoots: string[]): SpecUnit[] {
 /** Copilot instructions 系ファイル（読み取り表示専用）を発見する */
 export function discoverCopilot(workspaceRoots: string[]): CopilotUnit[] {
 	const units: CopilotUnit[] = [];
-	const push = (filePath: string, mode: CopilotUnit['mode'], applyTo?: string) => {
+	const push = (filePath: string, mode: CopilotUnit['mode'], root: string, applyTo?: string) => {
 		if (!fs.existsSync(filePath)) {
 			return;
 		}
 		units.push({
 			kind: 'copilot',
 			filePath,
+			workspaceRoot: root,
 			name: path.basename(filePath),
 			mode,
 			applyTo,
@@ -187,7 +196,7 @@ export function discoverCopilot(workspaceRoots: string[]): CopilotUnit[] {
 		});
 	};
 	for (const root of workspaceRoots) {
-		push(path.join(root, '.github', 'copilot-instructions.md'), 'always');
+		push(path.join(root, '.github', 'copilot-instructions.md'), 'always', root);
 		const instrDir = path.join(root, '.github', 'instructions');
 		if (fs.existsSync(instrDir)) {
 			const files: string[] = [];
@@ -197,7 +206,7 @@ export function discoverCopilot(workspaceRoots: string[]): CopilotUnit[] {
 					continue;
 				}
 				const fm = parseFrontmatter(readText(filePath));
-				push(filePath, 'applyTo', fm.values['applyTo']?.trim() || undefined);
+				push(filePath, 'applyTo', root, fm.values['applyTo']?.trim() || undefined);
 			}
 		}
 		// AGENTS.md はワークスペース内のものを拾う（深さ制限つき）
@@ -205,7 +214,7 @@ export function discoverCopilot(workspaceRoots: string[]): CopilotUnit[] {
 		listFilesRecursive(root, 0, all);
 		for (const filePath of all.sort()) {
 			if (path.basename(filePath) === 'AGENTS.md') {
-				push(filePath, 'always');
+				push(filePath, 'always', root);
 			}
 		}
 	}

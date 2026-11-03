@@ -49,7 +49,7 @@ test('Steering 発見と inclusion 解析、S1/S2/S5 が機能する', () => {
 	assert.equal(byName.get('manual')?.inclusion, 'manual');
 	assert.ok(byName.get('base')?.canonicalCounterpart?.includes('.agents'));
 
-	const rels = listWorkspaceRelPaths([root]);
+	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
 	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
 	const byRule = (id: string) => warnings.filter((w) => w.ruleId === id);
 	assert.equal(byRule('S1').length, 1, 'base.md の inclusion 未指定');
@@ -89,7 +89,7 @@ test('inclusion の綴り間違いに S6 が出る', () => {
 	setupWorkspace(root);
 	write(root, '.kiro/steering/typo.md', '---\ninclusion: alwyas\n---\n\n# Typo\n');
 	const steering = discoverSteering([root], ['.agents']);
-	const rels = listWorkspaceRelPaths([root]);
+	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
 	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
 	const s6 = warnings.filter((w) => w.ruleId === 'S6');
 	assert.equal(s6.length, 1);
@@ -103,7 +103,7 @@ test('表示言語を英語に切り替えると警告メッセージも英語�
 	const root = tmpRoot();
 	setupWorkspace(root);
 	const steering = discoverSteering([root], ['.agents']);
-	const rels = listWorkspaceRelPaths([root]);
+	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
 	setLanguage('en');
 	try {
 		const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);

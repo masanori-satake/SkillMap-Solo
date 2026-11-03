@@ -1,6 +1,6 @@
 # SkillMap-Solo
 
-[![Version](https://img.shields.io/badge/version-v1.1.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v1.2.0-blue.svg)](package.json)
 [![Visual Studio Marketplace](https://vsmarketplacebadges.dev/version/masanori-satake.skillmap-solo.svg?label=Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=masanori-satake.skillmap-solo)
 [![Open VSX](https://img.shields.io/open-vsx/v/masanori-satake/skillmap-solo?label=Open%20VSX)](https://open-vsx.org/extension/masanori-satake/skillmap-solo)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/masanori-satake/SkillMap-Solo)](https://github.com/masanori-satake/SkillMap-Solo/releases)
@@ -18,7 +18,7 @@
 
 AI context files are scattered and related: a SKILL.md points to references, references point to steering docs, and each tool (Kiro, GitHub Copilot) loads a different subset. When nobody sees the whole picture, upkeep lapses and output quality quietly degrades. SkillMap makes the structure, the token cost, and the best-practice gaps visible — and every warning comes with a **Tip** that explains why it matters and how to fix it, so you learn while you practise.
 
-Current version: **v1.1.1**
+Current version: **v1.2.0**
 
 ---
 
@@ -56,6 +56,7 @@ Current version: **v1.1.1**
 
 4. **Canonical / replica model**
    - If a canonical source (`.agents/` by default) is copied to `.kiro/` and `.github/` for different tools, the copies are grouped under the canonical skill. Rules apply to the canonical only; copies get a drift check.
+   - **Multi-root workspaces are supported**: grouping, drift checks, pattern matching, and the load simulation all work per workspace folder, so same-named skills in different repositories never interfere with each other.
 
 5. **Steering, Specs, and Copilot instructions side by side**
    - Steering files show inclusion badges (always / conditional / manual) and the always-loaded token total — a fixed cost in every Kiro session.
@@ -79,7 +80,7 @@ Current version: **v1.1.1**
 
 #### From a VSIX file
 
-1. Download `skillmap-solo-1.1.1.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
+1. Download `skillmap-solo-1.2.0.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
 2. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
 3. Run **Extensions: Install from VSIX...** and select the file
 
@@ -195,7 +196,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 AI コンテキストファイルは散在し、関係し合っています。SKILL.md が references を指し、references が Steering を指し、そしてツール（Kiro、GitHub Copilot）ごとに読み込む範囲が違います。全体像が見えないと保守が後回しになり、出力の精度は静かに落ちていきます。SkillMap は構造と読み込みコストとベストプラクティスからのズレを見える化し、すべての警告に「なぜ問題か＋直し方」の **Tips** を付けます。実践しながら理解できることが、この拡張機能の核です。
 
-現在のバージョン: **v1.1.1**
+現在のバージョン: **v1.2.0**
 
 ---
 
@@ -233,6 +234,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 
 4. **正本／複製モデル**
    - 正本（既定は `.agents/`）が `.kiro/` や `.github/` にツール別に複製されている構成では、複製を正本の下にグループ表示します。ルールは正本のみ、複製はドリフトチェックのみです。
+   - **マルチルートワークスペース対応**：グルーピング、ドリフトチェック、パターン判定、ロードシミュレーションはすべてフォルダ単位で動作し、別リポジトリの同名スキルが干渉し合うことはありません。
 
 5. **Steering / Specs / Copilot instructions を並べて表示**
    - Steering は inclusion バッジ（常時／条件／手動）と常時ロード合計（Kiro の全セッションの固定費）を表示します。
@@ -256,7 +258,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 
 #### VSIX ファイルから
 
-1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.1.1.vsix` をダウンロードする
+1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.2.0.vsix` をダウンロードする
 2. コマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）を開く
 3. **Extensions: Install from VSIX...** を実行し、ファイルを選ぶ
 

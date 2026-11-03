@@ -34,6 +34,8 @@ export interface FileInfo {
 
 export interface SkillUnit {
 	dir: string;
+	/** 発見元の探索ルート（ワークスペースフォルダ等）。マルチルート時のグルーピング単位 */
+	sourceRoot: string;
 	skillMdPath: string;
 	name: string;
 	frontmatter: Frontmatter;
@@ -208,7 +210,7 @@ export function readFileInfo(absPath: string, skillDir: string): FileInfo {
 	return { absPath, relToSkill, exists, isDirectory, boundary, tokens, lines, refs, text };
 }
 
-export function buildUnit(skillDir: string): SkillUnit {
+export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 	const skillMdPath = path.join(skillDir, 'SKILL.md');
 	const skillInfo = readFileInfo(skillMdPath, skillDir);
 	const content = skillInfo.text ?? '';
@@ -299,6 +301,7 @@ export function buildUnit(skillDir: string): SkillUnit {
 
 	return {
 		dir: skillDir,
+		sourceRoot,
 		skillMdPath,
 		name,
 		frontmatter,
@@ -331,7 +334,9 @@ function rootPriority(dir: string, canonicalRoots: string[]): number {
 export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): LogicalSkill[] {
 	const groups = new Map<string, SkillUnit[]>();
 	for (const unit of units) {
-		const key = unit.name;
+		// マルチルート対応: 正本/複製の関係は同一の探索ルート内でのみ成立させる。
+		// 別フォルダ（別リポジトリ）の同名スキルは統合しない。
+		const key = `${unit.sourceRoot}\n${unit.name}`;
 		const arr = groups.get(key) ?? [];
 		arr.push(unit);
 		groups.set(key, arr);

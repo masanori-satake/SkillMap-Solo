@@ -4,7 +4,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
 import { buildUnit, findSkillDirs, groupSkills } from '../skills.js';
-import { DEFAULT_RULE_SETTINGS, evaluateSkill } from '../rules.js';
+import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
+import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
 function tmpRoot(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), 'skillmap-test-'));
@@ -108,6 +109,39 @@ ${body}
 	assert.ok(byRule('R7').length === 1, '参照切れ');
 	assert.ok(byRule('R8').length >= 1, '循環参照');
 	assert.ok(byRule('R6').length >= 1, '深さ超過（deep2 は深さ3）');
+});
+
+test('マルチルート: 別フォルダの同名スキルは統合されず、S2はフォルダ内で判定される', () => {
+	const rootA = tmpRoot();
+	const rootB = tmpRoot();
+	// 両フォルダに同名スキル demo（正本 .agents のみ）を置く
+	const skillA = `---\nname: demo\ndescription: A側のデモ。テストを実行するときに使う。\n---\n\n# Demo A\n`;
+	const skillB = `---\nname: demo\ndescription: B側のデモ。テストを実行するときに使う。\n---\n\n# Demo B\n`;
+	write(rootA, '.agents/skills/demo/SKILL.md', skillA);
+	write(rootB, '.agents/skills/demo/SKILL.md', skillB);
+	// A には src/only-a.ts がある。B の steering がそれを指しても B 内には無いので S2 が出るべき
+	write(rootA, 'src/only-a.ts', 'export {};\n');
+	write(rootB, '.kiro/steering/needs-a.md', '---\ninclusion: fileMatch\nfileMatchPattern: "src/**/*.ts"\n---\n\n# NeedsA\n');
+
+	const dirsA = findSkillDirs([rootA], []);
+	const dirsB = findSkillDirs([rootB], []);
+	const units = [
+		...dirsA.map((d) => buildUnit(d, rootA)),
+		...dirsB.map((d) => buildUnit(d, rootB)),
+	];
+	const skills = groupSkills(units, ['.agents']);
+	assert.equal(skills.length, 2, '同名でも別フォルダなら統合しない');
+	assert.ok(skills.every((s) => s.copies.length === 0), '他フォルダの同名スキルを複製扱いしない');
+
+	const steering = discoverSteering([rootA, rootB], ['.agents']);
+	const byRoot = new Map([
+		[rootA, listWorkspaceRelPaths([rootA])],
+		[rootB, listWorkspaceRelPaths([rootB])],
+	]);
+	const warnings = evaluateSteering(steering, byRoot, DEFAULT_RULE_SETTINGS);
+	const s2 = warnings.filter((w) => w.ruleId === 'S2');
+	assert.equal(s2.length, 1, 'B のパターンは B 内に一致が無いので S2（A の同名パスに誤一致しない）');
+	assert.ok(s2[0].file.startsWith(rootB));
 });
 
 test('frontmatter の文字種・サイズ: ハイフン位置と compatibility 上限を検出する', () => {

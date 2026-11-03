@@ -442,9 +442,17 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 
 	private descriptionFor(node: MapNode): string | undefined {
 		const warn = (n: number) => (n > 0 ? ` ⚠${n}` : '');
+		// マルチルートで同名が複数あるときだけ、所属フォルダ名を付けて見分けられるようにする
+		const folderTag = (name: string, root: string, names: string[]): string =>
+			root && names.filter((x) => x === name).length > 1 ? ` · ${path.basename(root)}` : '';
 		switch (node.kind) {
 			case 'section': {
 				if (node.sectionId === 'steering') {
+					// 複数フォルダにまたがる場合は常時ロード合計が意味を持たないため件数表示にする
+					const roots = new Set(this.model.steering.map((u) => u.workspaceRoot));
+					if (roots.size > 1) {
+						return L(`${this.model.steering.length}件`, `${this.model.steering.length}`) + warn(node.allWarnings().length);
+					}
 					const always = this.model.alwaysSteeringTokens();
 					return `${L('常時ロード合計', 'Always-loaded total')} ≈${always.toLocaleString()} tok${warn(node.allWarnings().length)}`;
 				}
@@ -462,7 +470,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			}
 			case 'skill': {
 				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
-				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(node.allWarnings().length)}`;
+				const tag = node.skill ? folderTag(node.skill.name, node.skill.canonical.sourceRoot, this.model.skills.map((s) => s.name)) : '';
+				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(node.allWarnings().length)}${tag}`;
 			}
 			case 'copy':
 				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(node.warnings.length) : L('正本と一致', 'Matches canonical');
@@ -471,16 +480,17 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'steering': {
 				const u = node.steeringUnit!;
 				const badge = u.inclusion === 'always' ? L('常時', 'always') : u.inclusion === 'fileMatch' ? L('条件', 'conditional') : L('手動', 'manual');
-				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(node.warnings.length)}`;
+				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(node.warnings.length)}${folderTag(u.name, u.workspaceRoot, this.model.steering.map((x) => x.name))}`;
 			}
 			case 'spec': {
 				const missing = node.specUnit?.files.filter((f) => !f.present).length ?? 0;
-				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? L(` · 欠落${missing}`, ` · ${missing} missing`) : ''}${warn(node.warnings.length)}`;
+				const tag = node.specUnit ? folderTag(node.specUnit.name, node.specUnit.workspaceRoot, this.model.specs.map((x) => x.name)) : '';
+				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? L(` · 欠落${missing}`, ` · ${missing} missing`) : ''}${warn(node.warnings.length)}${tag}`;
 			}
 			case 'copilot': {
 				const u = node.copilotUnit!;
 				const mode = u.mode === 'always' ? L('常時', 'always') : `applyTo: ${u.applyTo ?? L('(未指定)', '(not set)')}`;
-				return `${mode} · ≈${u.tokens.toLocaleString()} tok`;
+				return `${mode} · ≈${u.tokens.toLocaleString()} tok${folderTag(u.name, u.workspaceRoot, this.model.copilot.map((x) => x.name))}`;
 			}
 			case 'missing':
 				return node.specUnit ? L('未作成', 'not created') : L('存在しません', 'does not exist');
@@ -576,7 +586,18 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.kind === 'section') {
 			if (node.sectionId === 'steering') {
 				md.appendMarkdown('**Steering (.kiro/steering)**\n\n');
-				md.appendMarkdown(L(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`, `- Always-loaded total (inclusion: always): ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`));
+				const roots = new Set(this.model.steering.map((u) => u.workspaceRoot));
+				if (roots.size > 1) {
+					// マルチルート時はフォルダごとの常時ロード合計を示す
+					for (const root of roots) {
+						const total = this.model.steering
+							.filter((u) => u.workspaceRoot === root && u.inclusion === 'always')
+							.reduce((s, u) => s + u.tokens, 0);
+						md.appendMarkdown(`- ${path.basename(root)}: ${L('常時ロード合計', 'Always-loaded total')} ≈${total.toLocaleString()} tok\n`);
+					}
+				} else {
+					md.appendMarkdown(L(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`, `- Always-loaded total (inclusion: always): ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`));
+				}
 				md.appendMarkdown(L('- Kiro が inclusion 設定に従って自動で読み込むファイルです。Copilot は読みません\n', '- Files Kiro loads automatically according to their inclusion settings. Copilot does not read them.\n'));
 			} else if (node.sectionId === 'copilot') {
 				md.appendMarkdown('**Copilot instructions**\n\n');

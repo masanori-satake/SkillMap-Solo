@@ -565,7 +565,7 @@ import {
 
 export function evaluateSteering(
 	units: SteeringUnit[],
-	workspaceRelPaths: string[],
+	relPathsByRoot: ReadonlyMap<string, string[]>,
 	settings: RuleSettings,
 ): SkillWarning[] {
 	const warnings: SkillWarning[] = [];
@@ -603,7 +603,9 @@ export function evaluateSteering(
 					file: unit.filePath,
 					line: 0,
 				});
-			} else if (!patternMatchesAny(unit.fileMatchPattern, workspaceRelPaths)) {
+			} else if (!patternMatchesAny(unit.fileMatchPattern, relPathsByRoot.get(unit.workspaceRoot) ?? [])) {
+				// S2 の照合は所属フォルダ内のファイルだけを対象にする（マルチルートで
+				// 別フォルダの同名パスに誤って一致させない）
 				warnings.push({
 					ruleId: 'S2',
 					severity: 'warn',
@@ -625,16 +627,25 @@ export function evaluateSteering(
 		}
 	}
 	// S3: 常時ロード合計の予算
+	// S3: 常時ロード合計の予算（フォルダごとに集計する。別リポジトリの分は合算しない）
 	if (settings.steeringAlwaysTokenBudget > 0 && units.length > 0) {
-		const alwaysUnits = units.filter((u) => u.inclusion === 'always');
-		const total = alwaysUnits.reduce((s, u) => s + u.tokens, 0);
-		if (total > settings.steeringAlwaysTokenBudget) {
-			warnings.push({
-				ruleId: 'S3',
-				severity: 'warn',
-				message: L(`Steering 常時ロードの合計が予算を超えています（約${total.toLocaleString()} / 予算 約${settings.steeringAlwaysTokenBudget.toLocaleString()}）`, `Total always-loaded steering tokens exceed the budget (approx. ${total.toLocaleString()} / budget approx. ${settings.steeringAlwaysTokenBudget.toLocaleString()})`),
-				file: path.dirname(units[0].filePath),
-			});
+		const byRoot = new Map<string, SteeringUnit[]>();
+		for (const u of units) {
+			const arr = byRoot.get(u.workspaceRoot) ?? [];
+			arr.push(u);
+			byRoot.set(u.workspaceRoot, arr);
+		}
+		for (const rootUnits of byRoot.values()) {
+			const alwaysUnits = rootUnits.filter((u) => u.inclusion === 'always');
+			const total = alwaysUnits.reduce((s, u) => s + u.tokens, 0);
+			if (total > settings.steeringAlwaysTokenBudget) {
+				warnings.push({
+					ruleId: 'S3',
+					severity: 'warn',
+					message: L(`Steering 常時ロードの合計が予算を超えています（約${total.toLocaleString()} / 予算 約${settings.steeringAlwaysTokenBudget.toLocaleString()}）`, `Total always-loaded steering tokens exceed the budget (approx. ${total.toLocaleString()} / budget approx. ${settings.steeringAlwaysTokenBudget.toLocaleString()})`),
+					file: path.dirname(rootUnits[0].filePath),
+				});
+			}
 		}
 	}
 	return warnings;
