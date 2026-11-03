@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { layerLabel, rootLabels, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
+import { isTentativeMention, layerLabel, rootLabels, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
@@ -36,6 +36,10 @@ export class MapNode {
 	warnings: SkillWarning[] = [];
 	boundary = false;
 	shared = false;
+	/** 未解決ノードが「ファイル名のみの言及」（R13）の場合に true */
+	tentative = false;
+	/** 参照元ファイル内での出現行（0始まり）。集約された重複言及の表示用 */
+	mentionLines: number[] = [];
 	labelOverride?: string;
 
 	constructor(kind: NodeKind) {
@@ -99,6 +103,16 @@ export class MapNode {
 		}
 		return out;
 	}
+
+	/** ⚠バッジの件数（R13 は気づきの提示であり、件数には数えない） */
+	badgeWarnings(): number {
+		return this.allWarnings().filter((w) => w.ruleId !== 'R13').length;
+	}
+}
+
+/** ⚠バッジの件数（配列版。R13 は数えない） */
+function badgeCount(warnings: SkillWarning[]): number {
+	return warnings.filter((w) => w.ruleId !== 'R13').length;
 }
 
 export class SkillMapModel {
@@ -313,9 +327,11 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					missing.unit = unit;
 					missing.filePath = edge.target;
 					missing.parent = node;
+					missing.tentative = isTentativeMention(edge);
+					missing.mentionLines = edge.lines;
 					if (unit === skill.canonical) {
 						const warnings = this.model.skillWarnings.get(skill.key) ?? [];
-						missing.warnings = warnings.filter((w) => w.ruleId === 'R7' && w.file === filePath && w.line === edge.line);
+						missing.warnings = warnings.filter((w) => (w.ruleId === 'R7' || w.ruleId === 'R13') && w.file === filePath && w.line === edge.line && w.target === edge.target);
 					}
 					children.push(missing);
 					continue;
@@ -366,6 +382,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				missing.graph = graph;
 				missing.filePath = edge.target;
 				missing.parent = parent;
+				missing.tentative = isTentativeMention(edge);
+				missing.mentionLines = edge.lines;
 				children.push(missing);
 				continue;
 			}
@@ -445,7 +463,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'copilot':
 				return node.copilotUnit?.name ?? '';
 			case 'missing':
-				return `${path.basename(node.filePath ?? '')} ${L('（参照切れ）', '(broken reference)')}`;
+				return node.tentative
+					? `${path.basename(node.filePath ?? '')} ${L('（要確認）', '(to check)')}`
+					: `${path.basename(node.filePath ?? '')} ${L('（参照切れ）', '(broken reference)')}`;
 			case 'cycle':
 				return `${path.basename(node.filePath ?? '')} ${L('（循環）', '(cycle)')}`;
 			default:
@@ -470,16 +490,16 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					// 複数フォルダにまたがる場合は常時ロード合計が意味を持たないため件数表示にする
 					const roots = new Set(this.model.steering.map((u) => u.workspaceRoot));
 					if (roots.size > 1) {
-						return L(`${this.model.steering.length}件`, `${this.model.steering.length}`) + warn(node.allWarnings().length);
+						return L(`${this.model.steering.length}件`, `${this.model.steering.length}`) + warn(node.badgeWarnings());
 					}
 					const always = this.model.alwaysSteeringTokens();
-					return `${L('常時ロード合計', 'Always-loaded total')} ≈${always.toLocaleString()} tok${warn(node.allWarnings().length)}`;
+					return `${L('常時ロード合計', 'Always-loaded total')} ≈${always.toLocaleString()} tok${warn(node.badgeWarnings())}`;
 				}
 				if (node.sectionId === 'skills') {
-					return L(`${this.model.skills.length}件`, `${this.model.skills.length}`) + warn(node.allWarnings().length);
+					return L(`${this.model.skills.length}件`, `${this.model.skills.length}`) + warn(node.badgeWarnings());
 				}
 				if (node.sectionId === 'specs') {
-					return L(`${this.model.specs.length}件`, `${this.model.specs.length}`) + warn(node.allWarnings().length);
+					return L(`${this.model.specs.length}件`, `${this.model.specs.length}`) + warn(node.badgeWarnings());
 				}
 				if (node.sectionId === 'copilot') {
 					const total = this.model.copilot.reduce((s, c) => s + c.tokens, 0);
@@ -490,21 +510,21 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'skill': {
 				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
 				const tag = node.skill ? folderTag(node.skill.name, node.skill.canonical.sourceRoot, this.model.skills.map((s) => ({ name: s.name, root: s.canonical.sourceRoot }))) : '';
-				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(node.allWarnings().length)}${tag}`;
+				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(node.badgeWarnings())}${tag}`;
 			}
 			case 'copy':
-				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(node.warnings.length) : L('正本と一致', 'Matches canonical');
+				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(badgeCount(node.warnings)) : L('正本と一致', 'Matches canonical');
 			case 'orphanGroup':
 				return L(`${node.children?.length ?? 0}件`, `${node.children?.length ?? 0}`);
 			case 'steering': {
 				const u = node.steeringUnit!;
 				const badge = u.inclusion === 'always' ? L('常時', 'always') : u.inclusion === 'fileMatch' ? L('条件', 'conditional') : L('手動', 'manual');
-				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(node.warnings.length)}${folderTag(u.name, u.workspaceRoot, this.model.steering.map((x) => ({ name: x.name, root: x.workspaceRoot })))}`;
+				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(badgeCount(node.warnings))}${folderTag(u.name, u.workspaceRoot, this.model.steering.map((x) => ({ name: x.name, root: x.workspaceRoot })))}`;
 			}
 			case 'spec': {
 				const missing = node.specUnit?.files.filter((f) => !f.present).length ?? 0;
 				const tag = node.specUnit ? folderTag(node.specUnit.name, node.specUnit.workspaceRoot, this.model.specs.map((x) => ({ name: x.name, root: x.workspaceRoot }))) : '';
-				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? L(` · 欠落${missing}`, ` · ${missing} missing`) : ''}${warn(node.warnings.length)}${tag}`;
+				return `≈${node.ownTokens.toLocaleString()} tok${missing > 0 ? L(` · 欠落${missing}`, ` · ${missing} missing`) : ''}${warn(badgeCount(node.warnings))}${tag}`;
 			}
 			case 'copilot': {
 				const u = node.copilotUnit!;
@@ -512,7 +532,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				return `${mode} · ≈${u.tokens.toLocaleString()} tok${folderTag(u.name, u.workspaceRoot, this.model.copilot.map((x) => ({ name: x.name, root: x.workspaceRoot })))}`;
 			}
 			case 'missing':
-				return node.specUnit ? L('未作成', 'not created') : L('存在しません', 'does not exist');
+				if (node.specUnit) {
+					return L('未作成', 'not created');
+				}
+				return node.tentative ? L('要確認', 'needs checking') : L('存在しません', 'does not exist');
 			case 'file':
 			case 'orphan':
 			case 'cycle': {
@@ -528,7 +551,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				if (node.boundary) {
 					parts.push(L('境界', 'boundary'));
 				}
-				return parts.join(' · ') + warn(node.warnings.length);
+				return parts.join(' · ') + warn(badgeCount(node.warnings));
 			}
 		}
 		return undefined;
@@ -562,7 +585,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'orphanGroup':
 				return new vscode.ThemeIcon('archive');
 			case 'missing':
-				return new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
+				// ファイル名のみの言及（R13）は参照切れと断定できないため、中立色のファイルアイコンにする
+				return node.tentative
+					? new vscode.ThemeIcon('file', new vscode.ThemeColor('disabledForeground'))
+					: new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
 			case 'cycle':
 				return new vscode.ThemeIcon('sync', new vscode.ThemeColor('editorWarning.foreground'));
 			case 'orphan':
@@ -706,7 +732,19 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.boundary) {
 			md.appendMarkdown(L('- 境界: 配置ディレクトリの外のファイルです。表示と構造チェックのみ対象です\n', '- Boundary: a file outside the owning directory. Display and structural checks only.\n'));
 		}
+		if (node.kind === 'missing' && node.mentionLines.length > 1) {
+			const lines = node.mentionLines.map((l) => l + 1).join(', ');
+			md.appendMarkdown(L(`- ${node.mentionLines.length}箇所で言及（行 ${lines}）\n`, `- Mentioned in ${node.mentionLines.length} places (lines ${lines})\n`));
+		}
 		this.appendWarnings(md, node.warnings);
+		// Steering / Specs のグラフ内ノードには警告が付かないため、要確認の言及は
+		// ここで直接 Tips への導線を出す（気づきの提示）
+		if (node.kind === 'missing' && node.tentative && node.warnings.length === 0) {
+			const summary = renderTipSummary('R13');
+			if (summary) {
+				md.appendMarkdown(`\n💡 ${escapeMarkdownText(summary)} [${L('Tips全文', 'Full Tip')}](${tipCommandUri('R13')})\n`);
+			}
+		}
 		return md;
 	}
 
