@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
-import type { LogicalSkill } from './skills.js';
+import { rootLabels, type LogicalSkill } from './skills.js';
 import { totalOwnedTokens } from './rules.js';
 import { L } from './i18n.js';
 
@@ -24,6 +24,18 @@ export function renderLoadMatrix(
 	];
 	const esc = (s: string) => s.replace(/\|/g, '\\|');
 	const notLoaded = L('読まれない', 'Not loaded');
+	// マルチルートでは同名ファイル（AGENTS.md 等）が並んで判別できないため、
+	// そのカテゴリが複数フォルダにまたがる場合は行にフォルダ名を付ける
+	const labelsFor = (roots: string[]): Map<string, string> | null => {
+		const unique = [...new Set(roots)];
+		return unique.length > 1 ? rootLabels(unique) : null;
+	};
+	const tagFor = (labels: Map<string, string> | null, root: string): string =>
+		labels ? ` · ${labels.get(root) ?? path.basename(root)}` : '';
+	const steeringLabels = labelsFor(steering.map((s) => s.workspaceRoot));
+	const skillLabels = labelsFor(skills.flatMap((s) => [s.canonical.sourceRoot, ...s.copies.map((c) => c.sourceRoot)]));
+	const copilotLabels = labelsFor(copilot.map((c) => c.workspaceRoot));
+	const specLabels = labelsFor(specs.map((s) => s.workspaceRoot));
 	for (const s of steering) {
 		const when =
 			s.inclusion === 'always'
@@ -31,7 +43,7 @@ export function renderLoadMatrix(
 				: s.inclusion === 'fileMatch'
 					? L(`条件一致時（${s.fileMatchPattern ?? 'パターンなし'}）`, `On match (${s.fileMatchPattern ?? 'no pattern'})`)
 					: L('手動のみ', 'Manual only');
-		lines.push(`| .kiro/steering/${esc(path.basename(s.filePath))} | ${when} | ${notLoaded} | ≈${s.tokens.toLocaleString()} |`);
+		lines.push(`| .kiro/steering/${esc(path.basename(s.filePath))}${tagFor(steeringLabels, s.workspaceRoot)} | ${when} | ${notLoaded} | ≈${s.tokens.toLocaleString()} |`);
 	}
 	for (const skill of skills) {
 		for (const copy of skill.copies) {
@@ -42,20 +54,20 @@ export function renderLoadMatrix(
 				const kiroCell = tool === 'Kiro' ? asSkill : notLoaded;
 				const copCell = tool === 'Copilot' ? asSkill : notLoaded;
 				lines.push(
-					`| ${esc(path.basename(copy.dir))}${L(`（複製: ${tool} 用）`, ` (replica for ${tool})`)} | ${kiroCell} | ${copCell} | ≈${totalOwnedTokens(copy).toLocaleString()} |`,
+					`| ${esc(path.basename(copy.dir))}${L(`（複製: ${tool} 用）`, ` (replica for ${tool})`)}${tagFor(skillLabels, copy.sourceRoot)} | ${kiroCell} | ${copCell} | ≈${totalOwnedTokens(copy).toLocaleString()} |`,
 				);
 			}
 		}
 		lines.push(
-			`| ${esc(skill.name)}${L('（正本）', ' (canonical)')} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
+			`| ${esc(skill.name)}${L('（正本）', ' (canonical)')}${tagFor(skillLabels, skill.canonical.sourceRoot)} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
 		);
 	}
 	for (const c of copilot) {
 		const when = c.mode === 'always' ? L('常時', 'Always') : L(`条件一致時（applyTo: ${c.applyTo ?? '未指定'}）`, `On match (applyTo: ${c.applyTo ?? 'not set'})`);
-		lines.push(`| ${esc(c.name)} | ${notLoaded} | ${when} | ≈${c.tokens.toLocaleString()} |`);
+		lines.push(`| ${esc(c.name)}${tagFor(copilotLabels, c.workspaceRoot)} | ${notLoaded} | ${when} | ≈${c.tokens.toLocaleString()} |`);
 	}
 	for (const spec of specs) {
-		lines.push(`| Spec: ${esc(spec.name)} | ${L('Spec 作業時', 'During spec work')} | ${notLoaded} | ≈${spec.totalTokens.toLocaleString()} |`);
+		lines.push(`| Spec: ${esc(spec.name)}${tagFor(specLabels, spec.workspaceRoot)} | ${L('Spec 作業時', 'During spec work')} | ${notLoaded} | ≈${spec.totalTokens.toLocaleString()} |`);
 	}
 	lines.push(
 		'',
