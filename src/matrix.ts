@@ -62,8 +62,8 @@ export function renderLoadMatrix(
 		L('## 読み方', '## How to read this'),
 		'',
 		L(
-			'- 「常時」は、そのツールを使う全セッションで読み込まれる固定費です',
-			'- "Always" is a fixed cost loaded in every session with that tool.',
+			'- 「常時」は、そのツールを使う全セッションで毎回読み込まれる分です',
+			'- "Always" is loaded — and its tokens consumed — in every session with that tool.',
 		),
 		L(
 			'- 「条件一致時」は、開いているファイルがパターンに一致したときだけ読み込まれます（ロードシミュレーションβで現在の対象を確認できます）',
