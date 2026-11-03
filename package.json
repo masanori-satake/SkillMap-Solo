@@ -1,7 +1,8 @@
 {
   "activationEvents": [
     "onView:skillmap-view",
-    "workspaceContains:**/SKILL.md"
+    "workspaceContains:**/SKILL.md",
+    "onCommand:skillmap.selectRoot"
   ],
   "author": {
     "name": "Masanori Satake"
@@ -43,6 +44,11 @@
         "command": "skillmap.expandAll",
         "icon": "$(expand-all)",
         "title": "%command.expandAll%"
+      },
+      {
+        "command": "skillmap.selectRoot",
+        "title": "%command.selectRoot%",
+        "icon": "$(list-filter)"
       }
     ],
     "configuration": {
@@ -155,6 +161,12 @@
           "group": "navigation",
           "order": 3,
           "when": "view == skillmap-view"
+        },
+        {
+          "command": "skillmap.selectRoot",
+          "group": "navigation",
+          "order": 4,
+          "when": "view == skillmap-view && skillmap.multiRoot"
         }
       ]
     },
@@ -219,5 +231,5 @@
     "vscode:prepublish": "node esbuild.js --production",
     "watch": "node esbuild.js --watch"
   },
-  "version": "1.4.1"
+  "version": "1.5.0"
 }

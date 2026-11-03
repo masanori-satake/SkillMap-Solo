@@ -38,6 +38,13 @@ test('ロードマトリクス: マルチルートでは同名ファイルにフ
 	assert.match(md, /\| Spec: beta · repoB \|/);
 });
 
+test('ロードマトリクス: 列順は Copilot が Kiro の左', () => {
+	const md = renderLoadMatrix([], [], [], [copilotUnit('/home/u/repoA', 100)]);
+	assert.match(md, /\| ファイル \| Copilot \| Kiro \| 推定トークン \|/);
+	// Copilot 行: Copilot 列に読み込み条件、Kiro 列に「読まれない」
+	assert.match(md, /\| AGENTS\.md \| 常時 \| 読まれない \| ≈100 \|/);
+});
+
 test('ロードマトリクス: 単一ルートではフォルダ名を付けない', () => {
 	const md = renderLoadMatrix([], [], [specUnit('/home/u/repoA', 'alpha')], [copilotUnit('/home/u/repoA', 100)]);
 	assert.match(md, /\| AGENTS\.md \|/);

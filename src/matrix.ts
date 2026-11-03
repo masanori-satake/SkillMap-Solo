@@ -19,7 +19,7 @@ export function renderLoadMatrix(
 			'Which files are loaded by which tool, and when. The loading model follows each tool\'s public documentation and is provided as a beta feature.',
 		),
 		'',
-		L('| ファイル | Kiro | Copilot | 推定トークン |', '| File | Kiro | Copilot | Est. tokens |'),
+		L('| ファイル | Copilot | Kiro | 推定トークン |', '| File | Copilot | Kiro | Est. tokens |'),
 		'|---|---|---|---:|',
 	];
 	const esc = (s: string) => s.replace(/\|/g, '\\|');
@@ -43,7 +43,7 @@ export function renderLoadMatrix(
 				: s.inclusion === 'fileMatch'
 					? L(`条件一致時（${s.fileMatchPattern ?? 'パターンなし'}）`, `On match (${s.fileMatchPattern ?? 'no pattern'})`)
 					: L('手動のみ', 'Manual only');
-		lines.push(`| .kiro/steering/${esc(path.basename(s.filePath))}${tagFor(steeringLabels, s.workspaceRoot)} | ${when} | ${notLoaded} | ≈${s.tokens.toLocaleString()} |`);
+		lines.push(`| .kiro/steering/${esc(path.basename(s.filePath))}${tagFor(steeringLabels, s.workspaceRoot)} | ${notLoaded} | ${when} | ≈${s.tokens.toLocaleString()} |`);
 	}
 	for (const skill of skills) {
 		for (const copy of skill.copies) {
@@ -54,7 +54,7 @@ export function renderLoadMatrix(
 				const kiroCell = tool === 'Kiro' ? asSkill : notLoaded;
 				const copCell = tool === 'Copilot' ? asSkill : notLoaded;
 				lines.push(
-					`| ${esc(path.basename(copy.dir))}${L(`（複製: ${tool} 用）`, ` (replica for ${tool})`)}${tagFor(skillLabels, copy.sourceRoot)} | ${kiroCell} | ${copCell} | ≈${totalOwnedTokens(copy).toLocaleString()} |`,
+					`| ${esc(path.basename(copy.dir))}${L(`（複製: ${tool} 用）`, ` (replica for ${tool})`)}${tagFor(skillLabels, copy.sourceRoot)} | ${copCell} | ${kiroCell} | ≈${totalOwnedTokens(copy).toLocaleString()} |`,
 				);
 			}
 		}
@@ -64,10 +64,10 @@ export function renderLoadMatrix(
 	}
 	for (const c of copilot) {
 		const when = c.mode === 'always' ? L('常時', 'Always') : L(`条件一致時（applyTo: ${c.applyTo ?? '未指定'}）`, `On match (applyTo: ${c.applyTo ?? 'not set'})`);
-		lines.push(`| ${esc(c.name)}${tagFor(copilotLabels, c.workspaceRoot)} | ${notLoaded} | ${when} | ≈${c.tokens.toLocaleString()} |`);
+		lines.push(`| ${esc(c.name)}${tagFor(copilotLabels, c.workspaceRoot)} | ${when} | ${notLoaded} | ≈${c.tokens.toLocaleString()} |`);
 	}
 	for (const spec of specs) {
-		lines.push(`| Spec: ${esc(spec.name)}${tagFor(specLabels, spec.workspaceRoot)} | ${L('Spec 作業時', 'During spec work')} | ${notLoaded} | ≈${spec.totalTokens.toLocaleString()} |`);
+		lines.push(`| Spec: ${esc(spec.name)}${tagFor(specLabels, spec.workspaceRoot)} | ${notLoaded} | ${L('Spec 作業時', 'During spec work')} | ≈${spec.totalTokens.toLocaleString()} |`);
 	}
 	lines.push(
 		'',
