@@ -48,16 +48,19 @@
       {
         "command": "skillmap.copyTree",
         "title": "%command.copyTree%",
+        "category": "SkillMap",
         "icon": "$(copy)"
       },
       {
         "command": "skillmap.copyVisibleTree",
         "title": "%command.copyVisibleTree%",
+        "category": "SkillMap",
         "icon": "$(clippy)"
       },
       {
         "command": "skillmap.selectRoot",
         "title": "%command.selectRoot%",
+        "category": "SkillMap",
         "icon": "$(list-filter)"
       }
     ],
