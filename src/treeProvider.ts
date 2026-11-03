@@ -698,13 +698,15 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (warnings.length === 0) {
 			return;
 		}
-		md.appendMarkdown(L('\n**警告**\n\n', '\n**Warnings**\n\n'));
+		md.appendMarkdown(L('\n**警告**\n', '\n**Warnings**\n'));
 		for (const w of warnings) {
 			const icon = w.severity === 'error' ? '🔴' : w.severity === 'warn' ? '🟡' : '🔵';
-			md.appendMarkdown(`${icon} **${w.ruleId}** ${w.message}\n`);
+			// Markdown のホバーでは単一改行が段落区切りにならないため、
+			// 警告ごと・Tips ごとに空行を入れて段落として分ける
+			md.appendMarkdown(`\n${icon} **${w.ruleId}** ${w.message}\n`);
 			const summary = renderTipSummary(w.ruleId);
 			if (summary) {
-				md.appendMarkdown(`　💡 ${summary} [${L('Tips全文', 'Full Tip')}](${tipCommandUri(w.ruleId, w.message)})\n`);
+				md.appendMarkdown(`\n　💡 ${summary} [${L('Tips全文', 'Full Tip')}](${tipCommandUri(w.ruleId, w.message)})\n`);
 			}
 			void RULES;
 		}

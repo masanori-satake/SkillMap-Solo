@@ -98,8 +98,8 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 		title: { ja: 'SKILL.md の推定トークン', en: 'SKILL.md estimated tokens' },
 		tip: {
 			principle: {
-				ja: 'SKILL.md のトークン数は、そのスキルを使うたびに必ず払う固定費です。',
-				en: 'The token count of SKILL.md is a fixed cost paid on every use of the skill.',
+				ja: 'SKILL.md のトークン数は、そのスキルを使うたびに毎回消費される分です。',
+				en: 'The tokens of SKILL.md are consumed on every use of the skill.',
 			},
 			fix: {
 				ja: '大きな表や例は references/ に移し、SKILL.md 自体を痩せさせてください。',
@@ -196,8 +196,8 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 		title: { ja: 'Steering の inclusion 未指定', en: 'Steering inclusion not specified' },
 		tip: {
 			principle: {
-				ja: 'inclusion 未指定の Steering は暗黙に「常時ロード」扱いとなり、全セッションで固定費を払い続けます。',
-				en: 'A steering file without an inclusion setting is implicitly "always loaded", so you keep paying its cost in every session.',
+				ja: 'inclusion 未指定の Steering は暗黙に「常時ロード」扱いとなり、全セッションでトークンを消費し続けます。',
+				en: 'A steering file without an inclusion setting is implicitly "always loaded", so its tokens are consumed in every session.',
 			},
 			fix: {
 				ja: 'frontmatter に inclusion を明示してください。特定ファイルでのみ必要なものは fileMatch、任意で読み込むものは manual が向きます。',
@@ -226,8 +226,8 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 		title: { ja: 'Steering 常時ロードの合計予算', en: 'Always-loaded steering total budget' },
 		tip: {
 			principle: {
-				ja: '常時ロードの合計は、Kiro を使う全セッションの固定費です。個別には小さくても合算で効いてきます。',
-				en: 'The always-loaded total is a fixed cost in every Kiro session. Small files add up.',
+				ja: '常時ロードの合計は、Kiro を使う全セッションで毎回消費されるトークンです。個別には小さくても合算で効いてきます。',
+				en: 'The always-loaded total is consumed in every Kiro session. Small files add up.',
 			},
 			fix: {
 				ja: '使用頻度の低いものから fileMatch / manual へ移すか、内容を要約して薄くしてください。',
@@ -282,8 +282,8 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 		title: { ja: 'inclusion の値が想定外', en: 'Unexpected inclusion value' },
 		tip: {
 			principle: {
-				ja: 'inclusion は always / fileMatch / manual の3値だけです。綴り間違いは黙って「常時ロード」に化け、意図しない固定費になります。',
-				en: 'inclusion accepts only always / fileMatch / manual. A typo silently degrades into "always loaded" — an unintended fixed cost.',
+				ja: 'inclusion は always / fileMatch / manual の3値だけです。綴り間違いは黙って「常時ロード」に化け、全セッションで意図せずトークンを消費し続けます。',
+				en: 'inclusion accepts only always / fileMatch / manual. A typo silently degrades into "always loaded", consuming tokens in every session without anyone noticing.',
 			},
 			fix: {
 				ja: 'frontmatter の inclusion の綴りを確認してください（例: alwyas → always）。',
