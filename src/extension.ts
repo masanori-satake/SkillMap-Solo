@@ -236,6 +236,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('skillmap.refresh', () => rebuild()),
+		vscode.commands.registerCommand('skillmap.expandAll', () => provider.expandAll(treeView)),
 		vscode.commands.registerCommand('skillmap.openFile', async (node?: MapNode) => {
 			if (!node?.filePath) {
 				return;
