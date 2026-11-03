@@ -649,14 +649,14 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			return md;
 		}
 		if (node.kind === 'copy') {
-			md.appendMarkdown(`**${L('複製', 'Replica')}**: ${node.unit?.dir ?? ''}\n\n`);
+			md.appendMarkdown(`**${L('複製', 'Replica')}**: ${escapeMarkdownText(node.unit?.dir ?? '')}\n\n`);
 			md.appendMarkdown(L('警告ルールは正本にのみ適用されます。複製にはドリフトチェック（R11）のみが適用されます。\n', 'Warning rules apply to the canonical source only. Replicas get the drift check (R11) only.\n'));
 			this.appendWarnings(md, node.warnings);
 			return md;
 		}
 		if (node.kind === 'steering' && node.steeringUnit) {
 			const u = node.steeringUnit;
-			md.appendMarkdown(`**${u.filePath}**\n\n`);
+			md.appendMarkdown(`**${escapeMarkdownText(u.filePath)}**\n\n`);
 			md.appendMarkdown(`- inclusion: ${u.inclusion}${u.inclusionExplicit ? '' : L('（未指定＝常時扱い）', ' (not specified = treated as always)')}\n`);
 			if (u.fileMatchPattern) {
 				md.appendMarkdown(`- fileMatchPattern: \`${u.fileMatchPattern}\`\n`);
@@ -664,7 +664,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
 			md.appendMarkdown(L('- Kiro: inclusion に従って自動ロード ／ Copilot: 読まれない\n', '- Kiro: auto-loaded per inclusion / Copilot: not loaded\n'));
 			if (u.canonicalCounterpart) {
-				md.appendMarkdown(`- ${L('正本', 'Canonical')}: ${u.canonicalCounterpart}\n`);
+				md.appendMarkdown(`- ${L('正本', 'Canonical')}: ${escapeMarkdownText(u.canonicalCounterpart)}\n`);
 			}
 			this.appendWarnings(md, node.warnings);
 			return md;
@@ -679,7 +679,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		}
 		if (node.kind === 'copilot' && node.copilotUnit) {
 			const u = node.copilotUnit;
-			md.appendMarkdown(`**${u.filePath}**\n\n`);
+			md.appendMarkdown(`**${escapeMarkdownText(u.filePath)}**\n\n`);
 			md.appendMarkdown(L(`- 読み込み: ${u.mode === 'always' ? '常時（Copilot）' : `applyTo: ${u.applyTo ?? '(未指定)'}`}\n`, `- Loading: ${u.mode === 'always' ? 'always (Copilot)' : `applyTo: ${u.applyTo ?? '(not set)'}`}\n`));
 			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
 			md.appendMarkdown(L('- Copilot: 読み込む ／ Kiro: 読まれない\n', '- Copilot: loaded / Kiro: not loaded\n'));
@@ -689,7 +689,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			md.appendMarkdown(L('スキル内に存在しますが、どこからも参照されていないファイルです。\n', 'Files that exist inside the skill but are not referenced from anywhere.\n'));
 			return md;
 		}
-		md.appendMarkdown(`**${node.filePath}**\n\n`);
+		md.appendMarkdown(`**${escapeMarkdownText(node.filePath ?? '')}**\n\n`);
 		const own = node.ownTokens;
 		const subtree = node.subtreeTokens();
 		const pathFiles = node.pathFiles();
@@ -719,10 +719,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			const icon = w.severity === 'error' ? '🔴' : w.severity === 'warn' ? '🟡' : '🔵';
 			// Markdown のホバーでは単一改行が段落区切りにならないため、
 			// 警告ごと・Tips ごとに空行を入れて段落として分ける
-			md.appendMarkdown(`\n${icon} **${w.ruleId}** ${w.message}\n`);
+			md.appendMarkdown(`\n${icon} **${w.ruleId}** ${escapeMarkdownText(w.message)}\n`);
 			const summary = renderTipSummary(w.ruleId);
 			if (summary) {
-				md.appendMarkdown(`\n　💡 ${summary} [${L('Tips全文', 'Full Tip')}](${tipCommandUri(w.ruleId, w.message)})\n`);
+				md.appendMarkdown(`\n　💡 ${escapeMarkdownText(summary)} [${L('Tips全文', 'Full Tip')}](${tipCommandUri(w.ruleId, w.message)})\n`);
 			}
 			void RULES;
 		}
@@ -737,4 +737,13 @@ function copyRootLabel(dir: string): string {
 	}
 	const parts = dir.split(path.sep).filter(Boolean);
 	return parts.length >= 2 ? parts[parts.length - 2] : path.basename(dir);
+}
+
+/**
+ * Markdown テキストへ埋め込む文字列の `\` を二重化する。
+ * Windows パスでは `\` の直後が句読点（例: `\.`）だと Markdown のエスケープとして
+ * 消費されて区切りが消えて表示される（例: `OmniView-Solo\.kiro` → `OmniView-Solo.kiro`）。
+ */
+function escapeMarkdownText(text: string): string {
+	return text.replace(/\\/g, '\\\\');
 }
