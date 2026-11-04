@@ -24,6 +24,8 @@ import { L, setLanguage } from './i18n.js';
 
 const TIP_SCHEME = 'skillmap-tip';
 const MATRIX_SCHEME = 'skillmap-matrix';
+/** 「すべて展開」で進捗表示を出す対象ノード数の下限（これ以下は無言で即展開） */
+const EXPAND_PROGRESS_THRESHOLD = 50;
 
 class TipContentProvider implements vscode.TextDocumentContentProvider {
 	provideTextDocumentContent(uri: vscode.Uri): string {
@@ -291,7 +293,28 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('skillmap.refresh', () => rebuild()),
-		vscode.commands.registerCommand('skillmap.expandAll', () => provider.expandAll(treeView)),
+		vscode.commands.registerCommand('skillmap.expandAll', async () => {
+			// ノードが多い時だけ進捗を出す（少ない時は従来どおり無言で展開する）。
+			// 共有参照が多いツリーではノード数が経路数まで膨らみ、逐次 reveal に
+			// 時間がかかるため、「終わらない」ように見えないよう進捗と残量を示す
+			if (provider.collectExpandable().length > EXPAND_PROGRESS_THRESHOLD) {
+				await vscode.window.withProgress(
+					{
+						location: vscode.ProgressLocation.Notification,
+						title: L('すべて展開中', 'Expanding all'),
+						cancellable: true,
+					},
+					(progress, token) =>
+						provider.expandAll(
+							treeView,
+							(done, total) => progress.report({ increment: 100 / total, message: `${done} / ${total}` }),
+							token,
+						),
+				);
+			} else {
+				await provider.expandAll(treeView);
+			}
+		}),
 		vscode.commands.registerCommand('skillmap.copyTree', () => copyTreeText(false)),
 		vscode.commands.registerCommand('skillmap.copyVisibleTree', () => copyTreeText(true)),
 		vscode.commands.registerCommand('skillmap.selectRoot', () => {

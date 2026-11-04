@@ -251,16 +251,32 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		this._onDidChangeTreeData.fire();
 	}
 
-	/** 「すべて展開」: 子を持つ全ノードを上位から順に展開する（標準の「すべて折りたたむ」の対） */
-	async expandAll(treeView: vscode.TreeView<MapNode>): Promise<void> {
+	/** 「すべて展開」の対象（子を持つ全ノード、上位から順） */
+	collectExpandable(): MapNode[] {
 		const walk = (n: MapNode): MapNode[] => [n, ...(n.children ?? []).flatMap(walk)];
-		const expandable = this.sections.flatMap(walk).filter((n) => (n.children?.length ?? 0) > 0);
+		return this.sections.flatMap(walk).filter((n) => (n.children?.length ?? 0) > 0);
+	}
+
+	/** 「すべて展開」: 子を持つ全ノードを上位から順に展開する（標準の「すべて折りたたむ」の対）。
+	 * onProgress が渡された場合は進捗を通知し、token のキャンセルで中断する */
+	async expandAll(
+		treeView: vscode.TreeView<MapNode>,
+		onProgress?: (done: number, total: number) => void,
+		token?: vscode.CancellationToken,
+	): Promise<void> {
+		const expandable = this.collectExpandable();
+		let done = 0;
 		for (const n of expandable) {
+			if (token?.isCancellationRequested) {
+				break;
+			}
 			try {
 				await treeView.reveal(n, { expand: true, select: false, focus: false });
 			} catch {
 				// 表示されていないノード等で失敗しても他を続行する
 			}
+			done++;
+			onProgress?.(done, expandable.length);
 		}
 	}
 
