@@ -1,6 +1,6 @@
 # SkillMap-Solo
 
-[![Version](https://img.shields.io/badge/version-v1.7.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v1.8.0-blue.svg)](package.json)
 [![Visual Studio Marketplace](https://vsmarketplacebadges.dev/version/masanori-satake.skillmap-solo.svg?label=Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=masanori-satake.skillmap-solo)
 [![Open VSX](https://img.shields.io/open-vsx/v/masanori-satake/skillmap-solo?label=Open%20VSX)](https://open-vsx.org/extension/masanori-satake/skillmap-solo)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/masanori-satake/SkillMap-Solo)](https://github.com/masanori-satake/SkillMap-Solo/releases)
@@ -18,7 +18,7 @@
 
 AI context files are scattered and related: a SKILL.md points to references, references point to steering docs, and each tool (Kiro, GitHub Copilot) loads a different subset. When nobody sees the whole picture, upkeep lapses and output quality quietly degrades. SkillMap makes the structure, the token cost, and the best-practice gaps visible — and every warning comes with a **Tip** that explains why it matters and how to fix it, so you learn while you practise.
 
-Current version: **v1.7.0**
+Current version: **v1.8.0**
 
 ---
 
@@ -80,7 +80,7 @@ Current version: **v1.7.0**
 
 #### From a VSIX file
 
-1. Download `skillmap-solo-1.7.0.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
+1. Download `skillmap-solo-1.8.0.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
 2. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
 3. Run **Extensions: Install from VSIX...** and select the file
 
@@ -114,7 +114,7 @@ Updates are delivered through the marketplace automatically, or by installing a 
 | Command | Description |
 |---|---|
 | `SkillMap: Refresh` | Re-scan the workspace |
-| `SkillMap: Expand All` | Expand all sections and skills in the view |
+| `SkillMap: Expand All` | Expand all sections and skills in the view (shows cancellable progress when the tree is large) |
 | `SkillMap: Show Tip` | Open the full Tip for the selected warning |
 | `SkillMap: Open File` | Open the file for the selected node |
 | `SkillMap: Show Load Matrix (per tool)` | Open the per-tool load matrix as Markdown |
@@ -200,7 +200,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 AI コンテキストファイルは散在し、関係し合っています。SKILL.md が references を指し、references が Steering を指し、そしてツール（Kiro、GitHub Copilot）ごとに読み込む範囲が違います。全体像が見えないと保守が後回しになり、出力の精度は静かに落ちていきます。SkillMap は構造と読み込みコストとベストプラクティスからのズレを見える化し、すべての警告に「なぜ問題か＋直し方」の **Tips** を付けます。実践しながら理解できることが、この拡張機能の核です。
 
-現在のバージョン: **v1.7.0**
+現在のバージョン: **v1.8.0**
 
 ---
 
@@ -262,7 +262,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 
 #### VSIX ファイルから
 
-1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.7.0.vsix` をダウンロードする
+1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.8.0.vsix` をダウンロードする
 2. コマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）を開く
 3. **Extensions: Install from VSIX...** を実行し、ファイルを選ぶ
 
@@ -296,7 +296,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 | コマンド | 説明 |
 |---|---|
 | `SkillMap: 再読み込み` | ワークスペースを再スキャンする |
-| `SkillMap: すべて展開` | ビュー内のセクションとスキルをすべて展開する |
+| `SkillMap: すべて展開` | ビュー内のセクションとスキルをすべて展開する（ノードが多い場合はキャンセル可能な進捗を表示） |
 | `SkillMap: Tipsを表示` | 選択中の警告の Tips 全文を開く |
 | `SkillMap: ファイルを開く` | 選択中のノードのファイルを開く |
 | `SkillMap: ツール別ロードマトリクスを表示` | ツール別の読み込み一覧を Markdown で開く |
