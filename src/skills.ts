@@ -581,8 +581,8 @@ export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): Logic
 	for (const [key, arr] of groups) {
 		// 正本扱いの発動条件（2026-11-07 決定）: 同一スキルが .agents / .github /
 		// .kiro の3か所すべてに存在する場合に限る。3つ揃わなければ正本/複製の
-		// 関係は作らず、各配置場所を独立したスキルとして扱う（グルーピング・
-		// 正本のみへの lint・R11 はこのときだけ働く）。単一ターゲットのスキルに
+		// 関係は作らず、各配置場所を独立したスキルとして扱う。グルーピング・
+		// 正本のみへの lint・R11 は、3つ揃った場合だけ働く。単一ターゲットのスキルに
 		// 「正本との乖離」といった前提の立たない警告を出さないため。
 		const locations = new Set(arr.map((u) => skillLocationOf(u.dir)));
 		const hasAllThree = locations.has('.agents') && locations.has('.github') && locations.has('.kiro');
