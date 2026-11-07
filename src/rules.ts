@@ -116,8 +116,8 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 				en: 'The deeper the reference chain, the more likely the AI never reaches the far end.',
 			},
 			fix: {
-				ja: 'よく使うファイルは SKILL.md から直接参照できる位置に置いてください。Steering 等の形式の境界の先は、このルールの対象外です。',
-				en: 'Place frequently used files where SKILL.md can reference them directly. Files beyond a format boundary (such as steering) are out of scope for this rule.',
+				ja: 'よく使うファイルは SKILL.md から直接参照できる位置に置いてください。Steering 等のスキル外のファイルは、このルールの対象外です。',
+				en: 'Place frequently used files where SKILL.md can reference them directly. Files outside the skill (such as steering) are out of scope for this rule.',
 			},
 		},
 	},
@@ -516,7 +516,7 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 		}
 	}
 
-	// R7: 参照切れ（境界の先の構造チェック含む）
+	// R7: 参照切れ（スキル外の構造チェック含む）
 	// リンク記法・パス付きの表記は参照の意図が明示的と考え、存在しなければ警告する。
 	// R13: コードスパンのファイル名のみの言及は参照の意図と断定できないため、
 	// 「参照切れ」とはせず、意図と合っているかの確認を促す注記（info）にする。
