@@ -652,7 +652,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					parts.push(L('共有', 'shared'));
 				}
 				if (node.boundary) {
-					parts.push(L('境界', 'boundary'));
+					parts.push(L('スキル外', 'external'));
 				}
 				return parts.join(' · ') + warn(badgeCount(node.warnings));
 			}
@@ -839,7 +839,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			md.appendMarkdown(L('- 共有: 複数のファイルから参照されています\n', '- Shared: referenced from multiple files.\n'));
 		}
 		if (node.boundary) {
-			md.appendMarkdown(L('- 境界: 配置ディレクトリの外のファイルです。表示と構造チェックのみ対象です\n', '- Boundary: a file outside the owning directory. Display and structural checks only.\n'));
+			md.appendMarkdown(L('- スキル外: スキルの配置ディレクトリの外にあるファイルです。表示と構造チェックのみ対象です\n', '- External: a file outside the skill directory. Display and structural checks only.\n'));
 		}
 		if (node.kind === 'missing' && node.mentionLines.length > 1) {
 			const lines = node.mentionLines.map((l) => l + 1).join(', ');

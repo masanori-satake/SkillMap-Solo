@@ -27,7 +27,7 @@ description: デモ用スキル。テストを実行するときに使う。
 詳細は [guide](references/guide.md) を参照。
 `;
 
-test('発見・グルーピング・境界・孤立が機能する', () => {
+test('発見・グルーピング・スキル外・孤立が機能する', () => {
 	const root = tmpRoot();
 	write(root, '.agents/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.agents/skills/demo/references/guide.md', '# Guide\n\n方針は [base](../../../../.kiro/steering/base.md) に従う。\n');
@@ -53,7 +53,7 @@ test('発見・グルーピング・境界・孤立が機能する', () => {
 	assert.equal(skill.copies.length, 2);
 
 	const unit = skill.canonical;
-	// 境界（steering）に到達している
+	// スキル外（steering）に到達している
 	const boundaryPaths = [...unit.reachableBoundary];
 	assert.ok(boundaryPaths.some((p) => p.includes('.kiro')));
 	// inclusion: always の steering が常時ロード分として数えられる

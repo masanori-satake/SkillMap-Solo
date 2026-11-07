@@ -36,7 +36,7 @@ export interface FileInfo {
 	relToSkill: string;
 	exists: boolean;
 	isDirectory: boolean;
-	/** 形式の境界の外（スキルディレクトリ外）か */
+	/** スキル外（スキルディレクトリ外）のファイルか */
 	boundary: boolean;
 	tokens: number;
 	lines: number;
@@ -55,15 +55,15 @@ export interface SkillUnit {
 	skillMdTokens: number;
 	skillMdBodyTokens: number;
 	bodyLines: number;
-	/** 到達可能なファイル（境界・参照切れ含む） */
+	/** 到達可能なファイル（スキル外・参照切れ含む） */
 	files: Map<string, FileInfo>;
-	/** BFS による参照深さ（SKILL.md = 0）。境界を跨いだ先は深さ counting の対象外として -1 */
+	/** BFS による参照深さ（SKILL.md = 0）。スキル外に到達した先は深さ counting の対象外として -1 */
 	depthOwned: Map<string, number>;
-	/** 表示用の深さ（境界の先も数える） */
+	/** 表示用の深さ（スキル外も数える） */
 	depthDisplay: Map<string, number>;
 	/** 到達可能なスキル内ファイル（SKILL.md 含む） */
 	reachableOwned: Set<string>;
-	/** 到達可能な境界ファイル */
+	/** 到達可能なスキル外ファイル */
 	reachableBoundary: Set<string>;
 	/** どこからも参照されていないスキル内ファイル */
 	orphans: string[];
@@ -71,7 +71,7 @@ export interface SkillUnit {
 	fileHashes: Map<string, string>;
 	/** L1（name + description）の推定トークン */
 	l1Tokens: number;
-	/** 境界のうち .kiro/steering かつ inclusion: always の推定トークン合計 */
+	/** スキル外のうち .kiro/steering かつ inclusion: always の推定トークン合計 */
 	steeringAlwaysTokens: number;
 }
 
