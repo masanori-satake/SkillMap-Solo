@@ -129,6 +129,43 @@ function badgeCount(warnings: SkillWarning[]): number {
 	return warnings.filter((w) => w.ruleId !== 'R13' && w.ruleId !== 'R7').length;
 }
 
+/**
+ * boundary（基準ディレクトリ外）の基準が何か。
+ * スキルのファイルノードではスキルが基準だが、Steering / Specs のグラフでも
+ * boundary は立つ（基準は Steering ファイルや Spec の配置ディレクトリ）。
+ * 表示を「スキル外」に決め打ちすると Steering から SKILL.md を参照したときに
+ * 誤解を招くため、祖先を辿って基準を判定する。
+ */
+type BoundaryFrame = 'skill' | 'steering' | 'spec';
+
+function boundaryFrame(node: MapNode): BoundaryFrame {
+	let current: MapNode | undefined = node;
+	while (current) {
+		if (current.unit) {
+			return 'skill';
+		}
+		if (current.steeringUnit) {
+			return 'steering';
+		}
+		if (current.specUnit) {
+			return 'spec';
+		}
+		current = current.parent;
+	}
+	return 'skill';
+}
+
+function boundaryBadge(frame: BoundaryFrame): string {
+	switch (frame) {
+		case 'steering':
+			return L('Steering外', 'outside steering');
+		case 'spec':
+			return L('Spec外', 'outside spec');
+		default:
+			return L('スキル外', 'external');
+	}
+}
+
 export class SkillMapModel {
 	skills: LogicalSkill[] = [];
 	skillWarnings = new Map<string, SkillWarning[]>();
@@ -652,7 +689,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					parts.push(L('共有', 'shared'));
 				}
 				if (node.boundary) {
-					parts.push(L('スキル外', 'external'));
+					parts.push(boundaryBadge(boundaryFrame(node)));
 				}
 				return parts.join(' · ') + warn(badgeCount(node.warnings));
 			}
@@ -839,7 +876,16 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			md.appendMarkdown(L('- 共有: 複数のファイルから参照されています\n', '- Shared: referenced from multiple files.\n'));
 		}
 		if (node.boundary) {
-			md.appendMarkdown(L('- スキル外: スキルの配置ディレクトリの外にあるファイルです。表示と構造チェックのみ対象です\n', '- External: a file outside the skill directory. Display and structural checks only.\n'));
+			switch (boundaryFrame(node)) {
+				case 'steering':
+					md.appendMarkdown(L('- Steering外: Steering ファイルの配置ディレクトリの外にあるファイルです\n', '- Outside steering: a file outside the directory that contains the steering file.\n'));
+					break;
+				case 'spec':
+					md.appendMarkdown(L('- Spec外: Spec の配置ディレクトリの外にあるファイルです\n', '- Outside spec: a file outside the spec directory.\n'));
+					break;
+				default:
+					md.appendMarkdown(L('- スキル外: スキルの配置ディレクトリの外にあるファイルです。表示と構造チェックのみ対象です\n', '- External: a file outside the skill directory. Display and structural checks only.\n'));
+			}
 		}
 		if (node.kind === 'missing' && node.mentionLines.length > 1) {
 			const lines = node.mentionLines.map((l) => l + 1).join(', ');
