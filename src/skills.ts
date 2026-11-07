@@ -554,6 +554,19 @@ export function rootLabels(roots: string[]): Map<string, string> {
 	return new Map(uniq.map((r) => [r, tail(r)]));
 }
 
+/** スキルの配置場所。.agents / .github / .kiro のいずれの配下にあるか */
+export type SkillLocation = '.agents' | '.github' | '.kiro';
+
+export function skillLocationOf(dir: string): SkillLocation | null {
+	const normalized = '/' + dir.split(path.sep).join('/').replace(/\/+$/, '') + '/';
+	for (const loc of ['.agents', '.github', '.kiro'] as const) {
+		if (normalized.includes(`/${loc}/skills/`)) {
+			return loc;
+		}
+	}
+	return null;
+}
+
 export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): LogicalSkill[] {
 	const groups = new Map<string, SkillUnit[]>();
 	for (const unit of units) {
@@ -566,22 +579,41 @@ export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): Logic
 	}
 	const result: LogicalSkill[] = [];
 	for (const [key, arr] of groups) {
-		const sorted = [...arr].sort((a, b) => {
-			const pa = rootPriority(a.dir, canonicalRoots);
-			const pb = rootPriority(b.dir, canonicalRoots);
-			if (pa !== pb) {
-				return pa - pb;
+		// 正本扱いの発動条件（2026-11-07 決定）: 同一スキルが .agents / .github /
+		// .kiro の3か所すべてに存在する場合に限る。3つ揃わなければ正本/複製の
+		// 関係は作らず、各配置場所を独立したスキルとして扱う（グルーピング・
+		// 正本のみへの lint・R11 はこのときだけ働く）。単一ターゲットのスキルに
+		// 「正本との乖離」といった前提の立たない警告を出さないため。
+		const locations = new Set(arr.map((u) => skillLocationOf(u.dir)));
+		const hasAllThree = locations.has('.agents') && locations.has('.github') && locations.has('.kiro');
+		if (arr.length > 1 && hasAllThree) {
+			const sorted = [...arr].sort((a, b) => {
+				const pa = rootPriority(a.dir, canonicalRoots);
+				const pb = rootPriority(b.dir, canonicalRoots);
+				if (pa !== pb) {
+					return pa - pb;
+				}
+				return a.dir.localeCompare(b.dir);
+			});
+			const canonical = sorted[0];
+			result.push({
+				key,
+				name: canonical.name,
+				canonical,
+				copies: sorted.slice(1),
+				canonicalExplicit: rootPriority(canonical.dir, canonicalRoots) !== Number.MAX_SAFE_INTEGER,
+			});
+		} else {
+			for (const unit of arr) {
+				result.push({
+					key: `${key}\n${unit.dir}`,
+					name: unit.name,
+					canonical: unit,
+					copies: [],
+					canonicalExplicit: false,
+				});
 			}
-			return a.dir.localeCompare(b.dir);
-		});
-		const canonical = sorted[0];
-		result.push({
-			key,
-			name: canonical.name,
-			canonical,
-			copies: sorted.slice(1),
-			canonicalExplicit: rootPriority(canonical.dir, canonicalRoots) !== Number.MAX_SAFE_INTEGER,
-		});
+		}
 	}
 	return result.sort((a, b) => a.name.localeCompare(b.name));
 }

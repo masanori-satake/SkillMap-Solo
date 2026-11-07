@@ -33,13 +33,16 @@ test('発見・グルーピング・境界・孤立が機能する', () => {
 	write(root, '.agents/skills/demo/references/guide.md', '# Guide\n\n方針は [base](../../../../.kiro/steering/base.md) に従う。\n');
 	write(root, '.agents/skills/demo/references/unused.md', '# 未使用\n');
 	write(root, '.kiro/steering/base.md', '---\ninclusion: always\n---\n\n# Base\n\n常時適用の方針。\n');
-	// 複製（同一内容）
+	// 複製（同一内容）。正本扱いは .agents / .github / .kiro の3か所が揃った場合のみ
 	write(root, '.github/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.github/skills/demo/references/guide.md', '# Guide\n\n方針は [base](../../../../.kiro/steering/base.md) に従う。\n');
 	write(root, '.github/skills/demo/references/unused.md', '# 未使用\n');
+	write(root, '.kiro/skills/demo/SKILL.md', GOOD_SKILL);
+	write(root, '.kiro/skills/demo/references/guide.md', '# Guide\n\n方針は [base](../../../../.kiro/steering/base.md) に従う。\n');
+	write(root, '.kiro/skills/demo/references/unused.md', '# 未使用\n');
 
 	const dirs = findSkillDirs([root], []);
-	assert.equal(dirs.length, 2);
+	assert.equal(dirs.length, 3);
 
 	const units = dirs.map((d) => buildUnit(d));
 	const skills = groupSkills(units, ['.agents']);
@@ -47,7 +50,7 @@ test('発見・グルーピング・境界・孤立が機能する', () => {
 	const skill = skills[0];
 	assert.equal(skill.canonicalExplicit, true);
 	assert.ok(skill.canonical.dir.includes('.agents'));
-	assert.equal(skill.copies.length, 1);
+	assert.equal(skill.copies.length, 2);
 
 	const unit = skill.canonical;
 	// 境界（steering）に到達している
@@ -73,6 +76,9 @@ test('複製ドリフトを検出する', () => {
 	write(root, '.agents/skills/demo/references/guide.md', '# Guide\n');
 	write(root, '.github/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.github/skills/demo/references/guide.md', '# Guide 改変済み\n');
+	// 正本扱いの条件（3か所すべて）を満たすため .kiro にも同一内容を置く
+	write(root, '.kiro/skills/demo/SKILL.md', GOOD_SKILL);
+	write(root, '.kiro/skills/demo/references/guide.md', '# Guide\n');
 
 	const units = findSkillDirs([root], []).map((d) => buildUnit(d));
 	const skill = groupSkills(units, ['.agents'])[0];
@@ -80,6 +86,42 @@ test('複製ドリフトを検出する', () => {
 	const drift = warnings.find((w) => w.ruleId === 'R11');
 	assert.ok(drift, 'R11 が出るはず');
 	assert.match(drift.message, /不一致 1件/);
+});
+
+test('正本扱いは3か所揃った場合のみ: .agents + .github の2か所では独立で R11 は出ない', () => {
+	// Copilot のみ対応のスキルを模す（コピー運用はしていないのに内容が違う2か所）
+	const root = tmpRoot();
+	write(root, '.agents/skills/demo/SKILL.md', GOOD_SKILL);
+	write(root, '.agents/skills/demo/references/guide.md', '# Guide\n');
+	write(root, '.github/skills/demo/SKILL.md', GOOD_SKILL);
+	write(root, '.github/skills/demo/references/guide.md', '# Guide 別の内容\n');
+	write(root, '.github/skills/demo/references/extra.md', '# GitHub 側にだけある\n');
+
+	const units = findSkillDirs([root], []).map((d) => buildUnit(d));
+	const skills = groupSkills(units, ['.agents']);
+	assert.equal(skills.length, 2, '各配置場所が独立したスキルになる');
+	assert.ok(skills.every((s) => s.copies.length === 0));
+	for (const skill of skills) {
+		const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+		assert.ok(!warnings.some((w) => w.ruleId === 'R11'), 'R11 は出ない');
+	}
+});
+
+test('正本扱いは3か所揃った場合のみ: .github + .kiro（.agents なし）も独立', () => {
+	const root = tmpRoot();
+	write(root, '.github/skills/demo/SKILL.md', GOOD_SKILL);
+	write(root, '.github/skills/demo/references/guide.md', '# Guide\n');
+	write(root, '.kiro/skills/demo/SKILL.md', GOOD_SKILL);
+	write(root, '.kiro/skills/demo/references/guide.md', '# Guide 別の内容\n');
+
+	const units = findSkillDirs([root], []).map((d) => buildUnit(d));
+	const skills = groupSkills(units, ['.agents']);
+	assert.equal(skills.length, 2);
+	assert.ok(skills.every((s) => s.copies.length === 0));
+	for (const skill of skills) {
+		const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+		assert.ok(!warnings.some((w) => w.ruleId === 'R11'), 'R11 は出ない');
+	}
 });
 
 test('違反系: name不一致・参照切れ・循環・深さを検出する', () => {
