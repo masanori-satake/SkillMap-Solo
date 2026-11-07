@@ -265,5 +265,5 @@
     "vscode:prepublish": "node esbuild.js --production",
     "watch": "node esbuild.js --watch"
   },
-  "version": "1.8.0"
+  "version": "1.8.1"
 }
