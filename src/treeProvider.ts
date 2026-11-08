@@ -769,7 +769,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 
 	private tooltipFor(node: MapNode): vscode.MarkdownString {
 		const md = new vscode.MarkdownString();
-		md.isTrusted = true;
+		// セキュリティ上の懸念: 全コマンド実行の許可 (isTrusted = true) による意図しない任意コマンド実行を防ぐため、
+		// ツールチップ内のリンクで実際に必要な `skillmap.openTip` のみに実行権限を限定する（最小権限の原則）
+		md.isTrusted = { enabledCommands: ['skillmap.openTip'] };
 		md.supportHtml = false;
 		if (node.kind === 'section') {
 			if (node.sectionId === 'steering') {
