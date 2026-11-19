@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
+import fsDefault from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isTentativeMention, listAllFiles, readFileInfo, rootLabels, scopeRootFor, type FileInfo, type SkillUnit } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isRealPathInside, isTentativeMention, listAllFiles, reachableTokens, readFileInfo, rootLabels, scopeRootFor, type FileInfo, type RefEdge, type SkillUnit } from '../skills.js';
 import { parseFrontmatter } from '../frontmatter.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
@@ -556,4 +557,104 @@ test('内容キャッシュ: ファイル変更後は新しい内容で評価さ
 	assert.ok(second.tokens > first.tokens, '変更後の内容でトークンが再計算される');
 	assert.equal(second.refs.length, 1, '変更後の参照が抽出される');
 	assert.equal(second.refs[0].exists, true);
+});
+
+test('レビュー指摘5: ハッシュ取得の一時的失敗をキャッシュしない', () => {
+	const root = tmpRoot();
+	// 1MB 超の通常ファイル（ハッシュは分割読みの sha1FileSync で求める経路）
+	write(root, 'big.md', '# Big\n\n' + 'あ'.repeat(600_000));
+	const p = path.join(root, 'big.md');
+	const expected = crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex');
+	// 一時的な読み取り失敗を再現する: sha1FileSync が使う fs.openSync を1回だけ失敗させる。
+	// 名前空間 import は getter のみの束縛で差し替えできないため、実 exports である
+	// デフォルト import 側を差し替える（skills.ts の呼び出しは実 exports を参照する）
+	const mutableFs = fsDefault as unknown as { openSync: typeof fs.openSync };
+	const originalOpenSync = mutableFs.openSync;
+	let failOnce = true;
+	mutableFs.openSync = (...args: Parameters<typeof fs.openSync>) => {
+		if (failOnce) {
+			failOnce = false;
+			throw new Error('transient read failure');
+		}
+		return (originalOpenSync as (...a: Parameters<typeof fs.openSync>) => number)(...args);
+	};
+	try {
+		assert.equal(fileHash(p), undefined, '失敗時はハッシュなしを返す');
+	} finally {
+		mutableFs.openSync = originalOpenSync;
+	}
+	// 失敗がキャッシュに残っていなければ、再試行で正しいハッシュが返る
+	// （旧実装では空ハッシュがキャッシュされ、再試行されなかった）
+	assert.equal(fileHash(p), expected);
+});
+
+test('レビュー指摘7: reachableTokens は表示上限と無関係にモデルから合計する', () => {
+	const root = tmpRoot();
+	const dir = path.join(root, 'chain');
+	const N = 202;
+	const files = new Map<string, FileInfo>();
+	const nameOf = (i: number) => path.join(dir, `f${i}.md`);
+	const edge = (target: string): RefEdge => ({
+		raw: path.basename(target),
+		line: 0,
+		lines: [0],
+		via: 'link',
+		target,
+		exists: true,
+		isDirectory: false,
+	});
+	for (let i = 0; i < N; i++) {
+		files.set(nameOf(i), {
+			absPath: nameOf(i),
+			relToSkill: path.basename(nameOf(i)),
+			exists: true,
+			isDirectory: false,
+			boundary: false,
+			tokens: 1,
+			lines: 1,
+			refs: i + 1 < N ? [edge(nameOf(i + 1))] : [],
+		});
+	}
+	// 202ファイル直列: 表示側の深さ上限（200）では末尾が切り詰められるが、
+	// モデルからの合計は全ファイル分になること
+	assert.equal(reachableTokens(files, nameOf(0)), N);
+	// ダイヤモンド共有は重複排除されること（a→b,c / b→d / c→d で 4）
+	const d = (name: string, refs: RefEdge[]): FileInfo => ({
+		absPath: path.join(dir, name),
+		relToSkill: name,
+		exists: true,
+		isDirectory: false,
+		boundary: false,
+		tokens: 1,
+		lines: 1,
+		refs,
+	});
+	const diamond = new Map<string, FileInfo>([
+		[path.join(dir, 'a.md'), d('a.md', [edge(path.join(dir, 'b.md')), edge(path.join(dir, 'c.md'))])],
+		[path.join(dir, 'b.md'), d('b.md', [edge(path.join(dir, 'd.md'))])],
+		[path.join(dir, 'c.md'), d('c.md', [edge(path.join(dir, 'd.md'))])],
+		[path.join(dir, 'd.md'), d('d.md', [])],
+	]);
+	assert.equal(reachableTokens(diamond, path.join(dir, 'a.md')), 4);
+});
+
+test('レビュー指摘2/3: isRealPathInside はリンク経由のフォルダ外を弾く', () => {
+	const root = tmpRoot();
+	const outside = tmpRoot();
+	write(root, 'sub/file.md', '# Inside\n');
+	write(outside, 'secret.md', '# Outside\n');
+	// 通常の配下パスと、ルート自身は内包として認める
+	assert.equal(isRealPathInside(root, path.join(root, 'sub', 'file.md')), true);
+	assert.equal(isRealPathInside(root, root), true);
+	// フォルダ外は弾く
+	assert.equal(isRealPathInside(root, path.join(outside, 'secret.md')), false);
+	// 配下のシンボリックリンクがフォルダ外を指す場合は、実体で判定して弾く
+	fs.symlinkSync(outside, path.join(root, 'escape'), 'dir');
+	assert.equal(isRealPathInside(root, path.join(root, 'escape')), false);
+	assert.equal(isRealPathInside(root, path.join(root, 'escape', 'secret.md')), false);
+	// フォルダ内を指すリンクは認める
+	fs.symlinkSync(path.join(root, 'sub'), path.join(root, 'inner-link'), 'dir');
+	assert.equal(isRealPathInside(root, path.join(root, 'inner-link', 'file.md')), true);
+	// 解決できないパスは採用しない
+	assert.equal(isRealPathInside(root, path.join(root, 'does-not-exist.md')), false);
 });

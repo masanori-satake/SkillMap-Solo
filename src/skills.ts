@@ -133,6 +133,23 @@ export function sha1FileSync(absPath: string): string | undefined {
 	}
 }
 
+/**
+ * シンボリックリンクを解決した実体パスでも target が base 配下にあるか。
+ * 字句上の内包判定（path.relative）は、base 配下のリンクがフォルダ外を指す
+ * 場合に回避できてしまうため、ワークスペース設定由来など信頼できない指定の
+ * 検証ではこちらを使う。どちらかが解決できなければ false（採用しない）。
+ */
+export function isRealPathInside(base: string, target: string): boolean {
+	try {
+		const realBase = fs.realpathSync(base);
+		const realTarget = fs.realpathSync(target);
+		const rel = path.relative(realBase, realTarget);
+		return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
+	} catch {
+		return false;
+	}
+}
+
 function isProbablyText(buf: Buffer): boolean {
 	const len = Math.min(buf.length, 8192);
 	for (let i = 0; i < len; i++) {
@@ -389,7 +406,15 @@ function contentOf(absPath: string, st: fs.Stats): ContentCacheEntry {
 	} else if (st.size > MAX_TEXT_FILE_BYTES) {
 		// サイズ上限を超える通常ファイルは内容を読まず、ハッシュだけ分割読みで
 		// 求める（ドリフト検出は維持し、メモリには載せない）
-		entry.hash = sha1FileSync(absPath) ?? '';
+		const hash = sha1FileSync(absPath);
+		if (hash === undefined) {
+			// 通常ファイルなのにハッシュを求められなかった（一時的な読み取り
+			// 失敗など）。「ハッシュなし」をキャッシュしてしまうと、mtime と
+			// サイズが同じ間は再試行されず fileHashes から欠落し続けるため、
+			// このエントリはキャッシュに登録せずに返す（次回に再試行できる）
+			return entry;
+		}
+		entry.hash = hash;
 	} else {
 		const buf = fs.readFileSync(absPath);
 		entry.hash = crypto.createHash('sha1').update(buf).digest('hex');
@@ -692,6 +717,37 @@ export interface FileGraph {
 	files: Map<string, FileInfo>;
 	depthDisplay: Map<string, number>;
 	reachable: Set<string>;
+}
+
+/**
+ * 起点ファイルから参照を辿って到達できるファイルのトークン合計（重複排除）。
+ * ツリーの「配下合計」は表示木からではなく、この解析モデル（files）から
+ * 計算する。表示側には深さ・総ノード数の上限があり、表示木を走査すると
+ * 上限の先にあるファイルが合計から漏れ、上限未満のときと値が変わってしまう
+ * （表示だけを変えて対象を変えない、という原則に反する）ため。
+ */
+export function reachableTokens(files: Map<string, FileInfo>, rootPath: string): number {
+	const seen = new Set<string>();
+	const queue = [rootPath];
+	let total = 0;
+	while (queue.length > 0) {
+		const p = queue.shift()!;
+		if (seen.has(p)) {
+			continue;
+		}
+		seen.add(p);
+		const info = files.get(p);
+		if (!info) {
+			continue;
+		}
+		total += info.tokens;
+		for (const edge of info.refs) {
+			if (edge.exists && !edge.isDirectory && !seen.has(edge.target)) {
+				queue.push(edge.target);
+			}
+		}
+	}
+	return total;
 }
 
 export function buildFileGraph(rootPath: string, ownedDir: string, resCtx?: ResolutionContext): FileGraph {

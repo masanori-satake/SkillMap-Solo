@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { buildUnit, findSkillDirs, groupSkills, listAllFiles, scopeRootFor } from './skills.js';
+import { buildUnit, findSkillDirs, groupSkills, isRealPathInside, listAllFiles, scopeRootFor } from './skills.js';
 import {
 	discoverCopilot,
 	discoverSpecs,
@@ -254,17 +254,19 @@ export function activate(context: vscode.ExtensionContext): void {
 		// 追加の探索ルート: 相対指定は各ワークスペースフォルダごとに解決する（マルチルート対応）。
 		// ワークスペース設定由来の場合は、解決先がワークスペースフォルダ配下に
 		// 収まるものだけを採用する（絶対パスや ../.. でのフォルダ外走査を防ぐ）。
-		// ユーザー設定由来は従来どおり制限しない
+		// 字句上の内包だけでは、フォルダ配下のシンボリックリンクがフォルダ外を
+		// 指す場合を防げないため、実体パス（realpath）でも内包を判定し、
+		// 解決できない探索先は採用しない。ユーザー設定由来は従来どおり制限しない
 		const extraRoots: string[] = [];
 		for (const r of settings.skillsRoots) {
 			if (path.isAbsolute(r)) {
-				if (settings.skillsRootsTrusted || scanRoots.some((w) => isPathInside(w, r))) {
+				if (settings.skillsRootsTrusted || scanRoots.some((w) => isPathInside(w, r) && isRealPathInside(w, r))) {
 					extraRoots.push(r);
 				}
 			} else {
 				for (const w of scanRoots) {
 					const resolved = path.resolve(w, r);
-					if (settings.skillsRootsTrusted || isPathInside(w, resolved)) {
+					if (settings.skillsRootsTrusted || (isPathInside(w, resolved) && isRealPathInside(w, resolved))) {
 						extraRoots.push(resolved);
 					}
 				}
@@ -287,7 +289,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			allWarnings.push(...w);
 		}
 		// Steering / Specs / Copilot
-		const steering = discoverSteering(scanRoots, canonicalRoots, knownFiles);
+		const steering = discoverSteering(scanRoots, canonicalRoots, knownFiles, settings.canonicalRootsTrusted);
 		// 相対パス一覧は fileMatch な Steering の死パターン判定（S2）でしか使わない。
 		// 必要なときだけ作る（全ファイル分の変換は走査と同程度に重いため）
 		const relPathsByRoot = steering.some((u) => u.inclusion === 'fileMatch')

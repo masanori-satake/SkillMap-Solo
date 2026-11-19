@@ -626,11 +626,13 @@ export function evaluateSteering(
 		}
 		// S1: inclusion 未指定
 		// ただし Kiro が自動生成する予約 Steering（.kiro/steering 直下の product/structure/tech）は
-		// 常時ロードが前提の設計で inclusion を書かないのが正規の形のため、警告から除外する
+		// 常時ロードが前提の設計で inclusion を書かないのが正規の形のため、警告から除外する。
+		// また未解析（サイズ上限超など）のファイルは inclusion が未確定であり、
+		// 「未指定」とは言えないため除外する
 		const isKiroReserved =
 			['product.md', 'structure.md', 'tech.md'].includes(path.basename(unit.filePath)) &&
 			path.basename(path.dirname(unit.filePath)) === 'steering';
-		if (!unit.inclusionExplicit && !isKiroReserved) {
+		if (!unit.inclusionExplicit && !isKiroReserved && !unit.unparsed) {
 			warnings.push({
 				ruleId: 'S1',
 				severity: 'info',
@@ -682,7 +684,8 @@ export function evaluateSteering(
 			byRoot.set(u.workspaceRoot, arr);
 		}
 		for (const rootUnits of byRoot.values()) {
-			const alwaysUnits = rootUnits.filter((u) => u.inclusion === 'always');
+			// 未解析のファイルは適用条件が未確定なので常時ロードに数えない
+			const alwaysUnits = rootUnits.filter((u) => u.inclusion === 'always' && !u.unparsed);
 			const total = alwaysUnits.reduce((s, u) => s + u.tokens, 0);
 			if (total > settings.steeringAlwaysTokenBudget) {
 				warnings.push({

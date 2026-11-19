@@ -157,3 +157,53 @@ test('表示言語を英語に切り替えると警告メッセージも英語�
 		setLanguage('ja');
 	}
 });
+
+test('レビュー指摘1: サイズ上限超の Steering は未解析として扱い、常時ロードに数えない', () => {
+	const root = tmpRoot();
+	write(root, '.kiro/steering/normal.md', '# Normal\n\n通常の常時ロード。\n');
+	// frontmatter では inclusion: manual だが、サイズ上限超で内容を読めない
+	write(root, '.kiro/steering/huge.md', '---\ninclusion: manual\n---\n\n' + 'あ'.repeat(600_000));
+	const steering = discoverSteering([root], ['.agents']);
+	const huge = steering.find((s) => s.name === 'huge');
+	assert.ok(huge, 'ユニット自体は保持される');
+	assert.equal(huge.tokens, 0);
+	assert.equal(huge.unparsed, true, 'サイズ超過は未解析として区別される');
+	// ロードシミュレーション: 未解析は常時ロードとして報告しない
+	const sim = simulateLoad('src/App.tsx', steering, []);
+	assert.deepEqual(sim.kiro.map((x) => x.name), ['normal.md']);
+	// S1（inclusion 未指定）は未解析には誤発しない
+	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
+	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
+	assert.equal(warnings.filter((w) => w.ruleId === 'S1' && w.file.endsWith('huge.md')).length, 0);
+	// 対照: 空ファイルは未解析ではなく、従来どおり「未指定＝常時」として扱われる
+	write(root, '.kiro/steering/empty.md', '');
+	const steering2 = discoverSteering([root], ['.agents']);
+	const empty = steering2.find((s) => s.name === 'empty');
+	assert.equal(empty?.unparsed, undefined);
+	assert.equal(empty?.inclusion, 'always');
+	const warnings2 = evaluateSteering(steering2, rels, DEFAULT_RULE_SETTINGS);
+	assert.equal(warnings2.filter((w) => w.ruleId === 'S1' && w.file.endsWith('empty.md')).length, 1);
+});
+
+test('レビュー指摘3: ワークスペース設定由来では外部への末端リンクを正本として採用しない', () => {
+	const root = tmpRoot();
+	const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'skillmap-outside-'));
+	write(outside, 'secret.md', '# Outside\n');
+	write(root, '.kiro/steering/linked.md', '# Linked\n');
+	write(root, 'inside-target.md', '# Inside target\n');
+	const counterpart = path.join(root, '.agents', 'steering', 'linked.md');
+	fs.mkdirSync(path.dirname(counterpart), { recursive: true });
+	fs.symlinkSync(path.join(outside, 'secret.md'), counterpart);
+	// ワークスペース設定由来（信頼できない）: 実体がフォルダ外 → 採用しない
+	// （採用すると S5 のハッシュ比較で外部ファイルを読むことになる）
+	const untrusted = discoverSteering([root], ['.agents'], undefined, false);
+	assert.equal(untrusted.find((s) => s.name === 'linked')?.canonicalCounterpart, undefined);
+	// ユーザー設定由来（信頼できる）: 従来どおり採用する
+	const trusted = discoverSteering([root], ['.agents'], undefined, true);
+	assert.ok(trusted.find((s) => s.name === 'linked')?.canonicalCounterpart?.includes('.agents'));
+	// フォルダ内を指すリンクは、信頼できない場合でも採用する
+	fs.unlinkSync(counterpart);
+	fs.symlinkSync(path.join(root, 'inside-target.md'), counterpart);
+	const internal = discoverSteering([root], ['.agents'], undefined, false);
+	assert.ok(internal.find((s) => s.name === 'linked')?.canonicalCounterpart?.includes('.agents'));
+});

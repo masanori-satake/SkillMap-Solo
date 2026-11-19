@@ -51,3 +51,22 @@ test('ロードマトリクス: 単一ルートではフォルダ名を付けな
 	assert.match(md, /\| Spec: alpha \|/);
 	assert.doesNotMatch(md, /repoA/);
 });
+
+test('ロードマトリクス: 未解析の Steering は「常時」ではなく未解析と表示する', () => {
+	const steeringUnit = (unparsed: boolean): import('../contexts.js').SteeringUnit => ({
+		kind: 'steering',
+		filePath: '/r/.kiro/steering/huge.md',
+		workspaceRoot: '/r',
+		name: 'huge',
+		inclusion: 'always',
+		inclusionExplicit: false,
+		unparsed: unparsed || undefined,
+		tokens: 0,
+		graph: { rootPath: '/r/.kiro/steering/huge.md', ownedDir: '/r/.kiro/steering', files: new Map(), depthDisplay: new Map(), reachable: new Set() },
+	});
+	const mdUnparsed = renderLoadMatrix([], [steeringUnit(true)], [], []);
+	assert.match(mdUnparsed, /未解析/);
+	assert.ok(!mdUnparsed.includes('| 常時 |'), '未解析を常時ロードとして表示しない');
+	const mdParsed = renderLoadMatrix([], [steeringUnit(false)], [], []);
+	assert.ok(mdParsed.includes('| 常時 |'), '解析できた always は従来どおり「常時」と表示する');
+});

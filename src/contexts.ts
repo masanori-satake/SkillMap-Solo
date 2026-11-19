@@ -5,6 +5,7 @@ import { estimateTokens } from './tokens.js';
 import {
 	buildFileGraph,
 	buildResolutionContext,
+	isRealPathInside,
 	listAllFiles,
 	listFilesRecursive,
 	MAX_TEXT_FILE_BYTES,
@@ -26,6 +27,11 @@ export interface SteeringUnit {
 	inclusion: Inclusion;
 	/** inclusion が frontmatter に明示されていたか */
 	inclusionExplicit: boolean;
+	/**
+	 * サイズ上限超などで内容を解析できなかった。inclusion 等の frontmatter
+	 * 由来の値は未確定であり、「常時ロード」として数えてはいけない
+	 */
+	unparsed?: boolean;
 	/** frontmatter に書かれた inclusion の生値（検証用） */
 	inclusionRaw?: string;
 	fileMatchPattern?: string;
@@ -64,17 +70,28 @@ export interface CopilotUnit {
 	tokens: number;
 }
 
-function readText(filePath: string): string {
+interface TextRead {
+	text: string;
+	/**
+	 * サイズ上限超・通常ファイルでない・読み取り失敗のいずれかで、内容を
+	 * 解析できなかった。空ファイル（text が空で unparsed でない）とは
+	 * 区別すること: 未解析のファイルの frontmatter 由来の値は未確定であり、
+	 * 「inclusion 未指定＝常時ロード」のような既定解釈をしてはいけない
+	 */
+	unparsed: boolean;
+}
+
+function readText(filePath: string): TextRead {
 	try {
 		// skills.ts 側と同じ上限: 通常ファイルでないもの（FIFO 等は open で
-		// ブロックする）とサイズ上限超は読まず、空として扱う
+		// ブロックする）とサイズ上限超は読まない
 		const st = fs.statSync(filePath);
 		if (!st.isFile() || st.size > MAX_TEXT_FILE_BYTES) {
-			return '';
+			return { text: '', unparsed: true };
 		}
-		return fs.readFileSync(filePath, 'utf8');
+		return { text: fs.readFileSync(filePath, 'utf8'), unparsed: false };
 	} catch {
-		return '';
+		return { text: '', unparsed: true };
 	}
 }
 
@@ -89,8 +106,19 @@ export function filesEqual(a: string, b: string): boolean {
 	return ha !== undefined && hb !== undefined && ha === hb;
 }
 
-/** .kiro/steering 配下の Steering ファイルを発見する */
-export function discoverSteering(workspaceRoots: string[], canonicalRoots: string[], knownFiles?: Map<string, string[]>): SteeringUnit[] {
+/**
+ * .kiro/steering 配下の Steering ファイルを発見する。
+ * canonicalTrusted が false（canonicalRoots がワークスペース設定由来）の
+ * 場合は、正本の対応ファイルの実体パスがワークスペース内に収まるものだけを
+ * 採用する。対応ファイル自体が外部ファイルへのシンボリックリンクだと、
+ * 乖離チェック（S5）のハッシュ計算で外部ファイルを読むことになるため
+ */
+export function discoverSteering(
+	workspaceRoots: string[],
+	canonicalRoots: string[],
+	knownFiles?: Map<string, string[]>,
+	canonicalTrusted = true,
+): SteeringUnit[] {
 	const units: SteeringUnit[] = [];
 	for (const root of workspaceRoots) {
 		const steeringDir = path.join(root, '.kiro', 'steering');
@@ -106,7 +134,7 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 			if (!filePath.endsWith('.md')) {
 				continue;
 			}
-			const text = readText(filePath);
+			const { text, unparsed } = readText(filePath);
 			const fm = parseFrontmatter(text);
 			const rawInclusion = (fm.values['inclusion'] ?? '').trim();
 			const inclusion: Inclusion =
@@ -115,10 +143,14 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 			let canonicalCounterpart: string | undefined;
 			for (const cr of canonicalRoots) {
 				const candidate = path.join(root, cr, 'steering', path.basename(filePath));
-				if (candidate !== filePath && fs.existsSync(candidate)) {
-					canonicalCounterpart = candidate;
-					break;
+				if (candidate === filePath || !fs.existsSync(candidate)) {
+					continue;
 				}
+				if (!canonicalTrusted && !isRealPathInside(root, candidate)) {
+					continue;
+				}
+				canonicalCounterpart = candidate;
+				break;
 			}
 			units.push({
 				kind: 'steering',
@@ -128,6 +160,7 @@ export function discoverSteering(workspaceRoots: string[], canonicalRoots: strin
 				inclusion,
 				inclusionExplicit: rawInclusion.length > 0,
 				inclusionRaw: rawInclusion || undefined,
+				unparsed: unparsed || undefined,
 				fileMatchPattern: fm.values['fileMatchPattern']?.trim() || undefined,
 				tokens: estimateTokens(text),
 				graph: buildFileGraph(filePath, steeringDir, resCtx),
@@ -173,7 +206,7 @@ export function discoverSpecs(workspaceRoots: string[], knownFiles?: Map<string,
 					fileName,
 					present,
 					filePath,
-					tokens: present ? estimateTokens(readText(filePath)) : 0,
+					tokens: present ? estimateTokens(readText(filePath).text) : 0,
 					graph: present ? buildFileGraph(filePath, dir, resCtx) : undefined,
 				};
 			});
@@ -204,7 +237,7 @@ export function discoverCopilot(workspaceRoots: string[], knownFiles?: Map<strin
 			name: path.basename(filePath),
 			mode,
 			applyTo,
-			tokens: estimateTokens(readText(filePath)),
+			tokens: estimateTokens(readText(filePath).text),
 		});
 	};
 	for (const root of workspaceRoots) {
@@ -217,7 +250,7 @@ export function discoverCopilot(workspaceRoots: string[], knownFiles?: Map<strin
 				if (!filePath.endsWith('.instructions.md')) {
 					continue;
 				}
-				const fm = parseFrontmatter(readText(filePath));
+				const fm = parseFrontmatter(readText(filePath).text);
 				push(filePath, 'applyTo', root, fm.values['applyTo']?.trim() || undefined);
 			}
 		}
@@ -265,6 +298,10 @@ export function simulateLoad(
 ): { kiro: Array<{ name: string; tokens: number; reason: string }>; copilot: Array<{ name: string; tokens: number; reason: string }> } {
 	const kiro: Array<{ name: string; tokens: number; reason: string }> = [];
 	for (const s of steering) {
+		// 未解析のファイルは適用条件が未確定なので、常時ロードにも条件一致にも数えない
+		if (s.unparsed) {
+			continue;
+		}
 		if (s.inclusion === 'always') {
 			kiro.push({ name: path.basename(s.filePath), tokens: s.tokens, reason: L('常時', 'always') });
 		} else if (s.inclusion === 'fileMatch' && s.fileMatchPattern && matchesAnyPattern(s.fileMatchPattern, relPathPosix)) {
