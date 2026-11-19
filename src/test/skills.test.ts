@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildResolutionContext, buildUnit, extractReferences, findSkillDirs, groupSkills, isTentativeMention, listAllFiles, readFileInfo, rootLabels, scopeRootFor } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isTentativeMention, listAllFiles, readFileInfo, rootLabels, scopeRootFor, type FileInfo, type SkillUnit } from '../skills.js';
+import { parseFrontmatter } from '../frontmatter.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
 
@@ -442,6 +445,104 @@ test('findSkillDirs: 走査結果を渡しても発見結果は同じ', () => {
 	const viaKnown = findSkillDirs([root], [], new Map([[root, listAllFiles(root)]]));
 	assert.deepEqual(viaKnown, viaWalk);
 	assert.equal(viaKnown.length, 1);
+});
+
+test('監査指摘2: `[` のみの長い行でも参照抽出が線形時間で終わる', () => {
+	const root = tmpRoot();
+	const from = path.join(root, 'a.md');
+	// 旧 LINK_RE では 50KB で約5秒かかった二次関数的な入力
+	const start = Date.now();
+	const edges = extractReferences(from, '['.repeat(50_000));
+	assert.equal(edges.length, 0);
+	assert.ok(Date.now() - start < 2000, '上限付き正規表現で線形に収まる');
+	// 互換性: タイトル付きリンクや、長い `[` 列の後ろにある通常リンクは従来どおり抽出される
+	const mixed = extractReferences(from, '[guide](references/guide.md "タイトル")\n' + '['.repeat(1000) + ' [ok](ok.md)\n');
+	assert.deepEqual(mixed.map((e) => e.raw).sort(), ['ok.md', 'references/guide.md']);
+});
+
+test('監査指摘1: サイズ上限を超えるファイルは読まず、ハッシュだけは維持する', () => {
+	const root = tmpRoot();
+	// 1MB を超える内容（'あ' は UTF-8 で3バイト）
+	write(root, 'big.md', '# Big\n\n' + 'あ'.repeat(600_000));
+	const p = path.join(root, 'big.md');
+	const info = readFileInfo(p, root);
+	assert.equal(info.exists, true);
+	assert.equal(info.text, undefined, '上限超はテキストとして扱わない');
+	assert.equal(info.tokens, 0);
+	assert.equal(info.refs.length, 0);
+	// ドリフト検出（R11）が従来どおり働くよう、ハッシュは分割読みで正しく求まる
+	const expected = crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex');
+	assert.equal(fileHash(p), expected);
+});
+
+test('監査指摘1: FIFO はブロックせずに読み飛ばす', (t) => {
+	const root = tmpRoot();
+	const fifo = path.join(root, 'pipe.md');
+	try {
+		execFileSync('mkfifo', [fifo]);
+	} catch {
+		t.skip('mkfifo が使えない環境');
+		return;
+	}
+	// 書き手のいない FIFO を readFileSync すると open でブロックし続ける。
+	// 通常ファイル判定で読み自体を避けること（このテストが終わること自体が確認）
+	const start = Date.now();
+	const info = readFileInfo(fifo, root);
+	assert.ok(Date.now() - start < 2000);
+	assert.equal(info.exists, true);
+	assert.equal(info.text, undefined);
+	assert.equal(info.tokens, 0);
+	assert.equal(fileHash(fifo), undefined);
+});
+
+test('監査指摘4: 参照チェーンが数万段でも findCycles がスタック溢れしない', () => {
+	const root = tmpRoot();
+	const dir = path.join(root, 'chain');
+	const N = 20_000;
+	const files = new Map<string, FileInfo>();
+	const depthOwned = new Map<string, number>();
+	const reachableOwned = new Set<string>();
+	const skillMdPath = path.join(dir, 'SKILL.md');
+	const nameOf = (i: number) => path.join(dir, `f${i}.md`);
+	for (let i = 0; i < N; i++) {
+		const self = i === 0 ? skillMdPath : nameOf(i);
+		const next = i + 1 < N ? nameOf(i + 1) : skillMdPath;
+		files.set(self, {
+			absPath: self,
+			relToSkill: path.basename(self),
+			exists: true,
+			isDirectory: false,
+			boundary: false,
+			tokens: 1,
+			lines: 1,
+			refs: [{ raw: path.basename(next), line: 0, lines: [0], via: 'link', target: next, exists: true, isDirectory: false }],
+		});
+		depthOwned.set(self, i);
+		reachableOwned.add(self);
+	}
+	const unit: SkillUnit = {
+		dir,
+		sourceRoot: root,
+		skillMdPath,
+		name: 'chain',
+		frontmatter: parseFrontmatter('---\nname: chain\ndescription: テスト用。テストを実行するときに使う。\n---\n\n# Chain\n'),
+		skillMdTokens: 1,
+		skillMdBodyTokens: 1,
+		bodyLines: 1,
+		files,
+		depthOwned,
+		depthDisplay: new Map(),
+		reachableOwned,
+		reachableBoundary: new Set(),
+		orphans: [],
+		fileHashes: new Map(),
+		l1Tokens: 1,
+		steeringAlwaysTokens: 0,
+	};
+	const skill = { key: 'chain', name: 'chain', canonical: unit, copies: [], canonicalExplicit: false };
+	// 旧実装は再帰 DFS のため、この深さでは RangeError で再構築全体が失敗した
+	const warnings = evaluateSkill(skill, { ...DEFAULT_RULE_SETTINGS, maxReferenceDepth: 0, orphanFiles: 'off', skillTotalTokenBudget: 0 });
+	assert.ok(warnings.some((w) => w.ruleId === 'R8'), '末尾から SKILL.md への循環が検出される');
 });
 
 test('内容キャッシュ: ファイル変更後は新しい内容で評価される', () => {

@@ -228,6 +228,16 @@
   "engines": {
     "vscode": "^1.90.0"
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "SkillMap reads workspace files directly from the local file system, so it requires a trusted workspace."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "SkillMap reads workspace files directly from the local file system, so it does not work on virtual workspaces."
+    }
+  },
   "homepage": "https://github.com/masanori-satake/SkillMap-Solo#readme",
   "icon": "icon.png",
   "keywords": [
@@ -265,5 +275,5 @@
     "vscode:prepublish": "node esbuild.js --production",
     "watch": "node esbuild.js --watch"
   },
-  "version": "1.8.4"
+  "version": "1.8.5"
 }

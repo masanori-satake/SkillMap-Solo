@@ -7,6 +7,7 @@ import {
 	discoverCopilot,
 	discoverSpecs,
 	discoverSteering,
+	filesEqual,
 	listWorkspaceRelPaths,
 	simulateLoad,
 } from '../contexts.js';
@@ -117,6 +118,27 @@ test('inclusion の綴り間違いに S6 が出る', () => {
 	// 暗黙に always 扱いになることも併せて確認
 	const typo = steering.find((s) => s.name === 'typo');
 	assert.equal(typo?.inclusion, 'always');
+});
+
+test('監査指摘1: Steering の読み込みにもサイズ上限が効く', () => {
+	const root = tmpRoot();
+	setupWorkspace(root);
+	// 1MB 超の steering は内容を読まない（トークン 0、frontmatter も読めない）
+	write(root, '.kiro/steering/huge.md', '---\ninclusion: manual\n---\n\n' + 'あ'.repeat(600_000));
+	const steering = discoverSteering([root], ['.agents']);
+	const huge = steering.find((s) => s.name === 'huge');
+	assert.ok(huge);
+	assert.equal(huge.tokens, 0);
+});
+
+test('監査指摘1: filesEqual は大きなファイルでも分割読みで比較できる', () => {
+	const root = tmpRoot();
+	const content = 'x'.repeat(1_500_000);
+	write(root, 'a.bin', content);
+	write(root, 'b.bin', content);
+	write(root, 'c.bin', content + 'y');
+	assert.equal(filesEqual(path.join(root, 'a.bin'), path.join(root, 'b.bin')), true);
+	assert.equal(filesEqual(path.join(root, 'a.bin'), path.join(root, 'c.bin')), false);
 });
 
 test('表示言語を英語に切り替えると警告メッセージも英語になる', () => {

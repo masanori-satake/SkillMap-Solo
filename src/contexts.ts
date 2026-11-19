@@ -1,4 +1,3 @@
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseFrontmatter } from './frontmatter.js';
@@ -8,7 +7,9 @@ import {
 	buildResolutionContext,
 	listAllFiles,
 	listFilesRecursive,
+	MAX_TEXT_FILE_BYTES,
 	readFileInfo,
+	sha1FileSync,
 	type FileGraph,
 } from './skills.js';
 import { matchesAnyPattern } from './glob.js';
@@ -65,6 +66,12 @@ export interface CopilotUnit {
 
 function readText(filePath: string): string {
 	try {
+		// skills.ts 側と同じ上限: 通常ファイルでないもの（FIFO 等は open で
+		// ブロックする）とサイズ上限超は読まず、空として扱う
+		const st = fs.statSync(filePath);
+		if (!st.isFile() || st.size > MAX_TEXT_FILE_BYTES) {
+			return '';
+		}
 		return fs.readFileSync(filePath, 'utf8');
 	} catch {
 		return '';
@@ -72,11 +79,8 @@ function readText(filePath: string): string {
 }
 
 function sha1Of(filePath: string): string | undefined {
-	try {
-		return crypto.createHash('sha1').update(fs.readFileSync(filePath)).digest('hex');
-	} catch {
-		return undefined;
-	}
+	// 分割読み版（全量をメモリに載せない。通常ファイル以外は undefined）
+	return sha1FileSync(filePath);
 }
 
 export function filesEqual(a: string, b: string): boolean {

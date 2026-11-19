@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { isTentativeMention, type LogicalSkill, type SkillUnit } from './skills.js';
+import { isTentativeMention, type LogicalSkill, type RefEdge, type SkillUnit } from './skills.js';
 import { L } from './i18n.js';
 
 export type Severity = 'error' | 'warn' | 'info';
@@ -413,26 +413,42 @@ export function driftBetween(canonical: SkillUnit, copy: SkillUnit): Drift {
 function findCycles(unit: SkillUnit): Array<{ from: string; line: number; to: string }> {
 	const cycles: Array<{ from: string; line: number; to: string }> = [];
 	const visited = new Set<string>();
+	// 現在の DFS 経路（循環判定用）。Set 版も併せ持ち、経路長に対して線形に保つ
 	const stack: string[] = [];
-	const dfs = (current: string) => {
+	const onStack = new Set<string>();
+	// 再帰 DFS と同じ順序・同じ検出結果を保ちながら、明示スタックで反復する。
+	// 参照チェーンの長さがそのままコールスタックの深さになると、数千段の
+	// チェーンで RangeError になり再構築全体が失敗するため
+	interface Frame {
+		current: string;
+		edges: RefEdge[];
+		index: number;
+	}
+	const frames: Frame[] = [];
+	const enter = (current: string): void => {
 		visited.add(current);
 		stack.push(current);
-		const info = unit.files.get(current);
-		if (info) {
-			for (const edge of info.refs) {
-				if (!edge.exists || edge.isDirectory) {
-					continue;
-				}
-				if (stack.includes(edge.target)) {
-					cycles.push({ from: current, line: edge.line, to: edge.target });
-				} else if (!visited.has(edge.target)) {
-					dfs(edge.target);
-				}
-			}
-		}
-		stack.pop();
+		onStack.add(current);
+		frames.push({ current, edges: unit.files.get(current)?.refs ?? [], index: 0 });
 	};
-	dfs(unit.skillMdPath);
+	enter(unit.skillMdPath);
+	while (frames.length > 0) {
+		const frame = frames[frames.length - 1];
+		if (frame.index >= frame.edges.length) {
+			frames.pop();
+			onStack.delete(stack.pop()!);
+			continue;
+		}
+		const edge = frame.edges[frame.index++];
+		if (!edge.exists || edge.isDirectory) {
+			continue;
+		}
+		if (onStack.has(edge.target)) {
+			cycles.push({ from: frame.current, line: edge.line, to: edge.target });
+		} else if (!visited.has(edge.target)) {
+			enter(edge.target);
+		}
+	}
 	return cycles;
 }
 
