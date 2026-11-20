@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { isTentativeMention, layerLabel, rootLabels, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
+import { isTentativeMention, layerLabel, reachableTokens, rootLabels, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
@@ -177,8 +177,9 @@ export class SkillMapModel {
 	betaSpecs = true;
 
 	alwaysSteeringTokens(): number {
+		// 未解析のファイルは適用条件が未確定なので常時ロードに数えない
 		return this.steering
-			.filter((s) => s.inclusion === 'always')
+			.filter((s) => s.inclusion === 'always' && !s.unparsed)
 			.reduce((sum, s) => sum + s.tokens, 0);
 	}
 }
@@ -214,9 +215,20 @@ function sectionLabel(id: SectionId): string {
 	}
 }
 
+/**
+ * ツリー構築の総ノード数上限。表示側は経路単位でノードを作るため、ダイヤモンド型の
+ * 共有参照が重なると経路数まで膨らむ（最大で指数的）。上限を超えた分は子を展開
+ * しないプレースホルダに畳む。解析モデル（unit.files）自体は変えない、表示だけの制限
+ */
+const MAX_TREE_NODES = 5000;
+/** ツリー構築の深さ上限（再帰の深さ＝コールスタックの深さになるため） */
+const MAX_TREE_DEPTH = 200;
+
 export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	private _onDidChangeTreeData = new vscode.EventEmitter<MapNode | undefined | void>();
 	readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+	/** 構築中の残りノード予算（buildSections のたびにリセット） */
+	private nodeBudget = MAX_TREE_NODES;
 	/** 直近に構築したセクション（すべて展開の走査用） */
 	private sections: MapNode[] = [];
 	/** 利用者が手で開閉したノード（キー→展開状態）。再構築をまたいで保持する */
@@ -349,6 +361,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	// ---- セクション ----
 
 	private buildSections(): MapNode[] {
+		this.nodeBudget = MAX_TREE_NODES;
 		const sections: MapNode[] = [];
 		const make = (id: SectionId, children: MapNode[], warnings: SkillWarning[] = []): MapNode => {
 			const section = new MapNode('section');
@@ -393,15 +406,25 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			group.skill = skill;
 			group.unit = skill.canonical;
 			group.parent = root;
-			group.children = skill.canonical.orphans.map((orphanPath) => {
+			// 未参照ファイルも共有予算を消費する。予算を消費しない経路があると、
+			// 参照されていないファイルが大量にあるスキルで総ノード数の上限が
+			// 成立しない。予算到達後は残りを個別には作らず、省略を1ノードにまとめる
+			const orphanChildren: MapNode[] = [];
+			for (const orphanPath of skill.canonical.orphans) {
+				if (this.nodeBudget <= 0) {
+					orphanChildren.push(this.makeOmittedNode(group, skill, skill.canonical));
+					break;
+				}
+				this.nodeBudget--;
 				const orphan = new MapNode('orphan');
 				orphan.skill = skill;
 				orphan.unit = skill.canonical;
 				orphan.filePath = orphanPath;
 				orphan.parent = group;
 				orphan.warnings = warnings.filter((w) => w.file === orphanPath);
-				return orphan;
-			});
+				orphanChildren.push(orphan);
+			}
+			group.children = orphanChildren;
 			children.push(group);
 		}
 		for (const copy of skill.copies) {
@@ -417,6 +440,20 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		return root;
 	}
 
+	/** 予算到達後に残りの兄弟をまとめて省略したことを示すプレースホルダ。
+	 * 兄弟を1件ずつプレースホルダ化すると上限自体が意味を失うため、
+	 * 省略は親ごとに1ノードだけにし、「参照がない」場合と区別できるようにする */
+	private makeOmittedNode(parent: MapNode, skill?: LogicalSkill, unit?: SkillUnit, graph?: FileGraph): MapNode {
+		const node = new MapNode('file');
+		node.skill = skill;
+		node.unit = unit;
+		node.graph = graph;
+		node.parent = parent;
+		node.labelOverride = L('（表示上限で省略）', '(omitted at display limit)');
+		node.children = [];
+		return node;
+	}
+
 	private buildFileNode(
 		skill: LogicalSkill,
 		unit: SkillUnit,
@@ -424,6 +461,27 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		parent: MapNode,
 		ancestorChain: string[],
 	): MapNode {
+		if (this.nodeBudget <= 0 || ancestorChain.length >= MAX_TREE_DEPTH) {
+			// 上限超過分は子を展開しないプレースホルダに畳む（ファイル自体は開ける）。
+			// プレースホルダも予算を消費する（深さ上限到達後の一親からの大量の
+			// 参照で、予算を消費しないプレースホルダが際限なく増えないように）。
+			// 自分自身の警告は保持する（親のバッジ集計から消えないように）
+			this.nodeBudget--;
+			const node = new MapNode('file');
+			node.skill = skill;
+			node.unit = unit;
+			node.filePath = filePath;
+			node.parent = parent;
+			node.labelOverride = `${path.basename(filePath)} ${L('（表示上限）', '(display limit)')}`;
+			node.boundary = unit.files.get(filePath)?.boundary ?? false;
+			if (unit === skill.canonical) {
+				const warnings = this.model.skillWarnings.get(skill.key) ?? [];
+				node.warnings = warnings.filter((w) => w.file === filePath && w.copyDir === undefined);
+			}
+			node.children = [];
+			return node;
+		}
+		this.nodeBudget--;
 		const info = unit.files.get(filePath);
 		const node = new MapNode('file');
 		node.skill = skill;
@@ -441,7 +499,15 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		const children: MapNode[] = [];
 		if (info && !info.isDirectory) {
 			for (const edge of info.refs) {
+				// 子ノードは生成経路（ディレクトリ・未解決・循環・通常）によらず
+				// すべて共有予算を消費する。予算到達後は残りの兄弟を個別には
+				// 作らず、省略を1ノードにまとめて打ち切る
+				if (this.nodeBudget <= 0) {
+					children.push(this.makeOmittedNode(node, skill, unit));
+					break;
+				}
 				if (edge.isDirectory) {
+					this.nodeBudget--;
 					const dirNode = new MapNode('file');
 					dirNode.skill = skill;
 					dirNode.unit = unit;
@@ -452,6 +518,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					continue;
 				}
 				if (!edge.exists) {
+					this.nodeBudget--;
 					const missing = new MapNode('missing');
 					missing.skill = skill;
 					missing.unit = unit;
@@ -467,6 +534,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					continue;
 				}
 				if (chain.includes(edge.target)) {
+					this.nodeBudget--;
 					const cycle = new MapNode('cycle');
 					cycle.skill = skill;
 					cycle.unit = unit;
@@ -479,6 +547,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					children.push(cycle);
 					continue;
 				}
+				// 通常の子は buildFileNode の入口で予算を消費する（入口の
+				// プレースホルダ判定が、予算切れの再帰を1件で止める）
 				children.push(this.buildFileNode(skill, unit, edge.target, node, chain));
 			}
 		}
@@ -507,6 +577,14 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			if (edge.isDirectory) {
 				continue;
 			}
+			if (this.nodeBudget <= 0) {
+				// 総ノード数上限に達したら、残りの兄弟は個別には作らず省略を
+				// 1ノードにまとめる（「参照がない」場合と区別できるように。
+				// 先行セクションが予算を使い切った場合も同様）
+				children.push(this.makeOmittedNode(parent, undefined, undefined, graph));
+				break;
+			}
+			this.nodeBudget--;
 			if (!edge.exists) {
 				const missing = new MapNode('missing');
 				missing.graph = graph;
@@ -530,7 +608,14 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			child.filePath = edge.target;
 			child.parent = parent;
 			child.boundary = graph.files.get(edge.target)?.boundary ?? false;
-			child.children = this.buildGraphChildren(graph, edge.target, child, [...chain, edge.target]);
+			// 深さ上限に達したら子は展開しない（プレースホルダとして畳む）
+			child.children =
+				chain.length >= MAX_TREE_DEPTH
+					? []
+					: this.buildGraphChildren(graph, edge.target, child, [...chain, edge.target]);
+			if (chain.length >= MAX_TREE_DEPTH) {
+				child.labelOverride = `${path.basename(edge.target)} ${L('（表示上限）', '(display limit)')}`;
+			}
 			children.push(child);
 		}
 		return children;
@@ -602,6 +687,47 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		}
 	}
 
+	/**
+	 * セクション／スキル単位の警告集計は、表示木ではなく解析モデルから取る。
+	 * 表示木は深さ・総ノード数の上限で切り詰められ、上限の先にある警告
+	 * （深い場所の R8 等）がバッジやホバーから消えてしまうため。表示だけを
+	 * 変えて対象（集計結果）を変えない、という原則に基づく。
+	 * 対象外のノードでは undefined を返し、呼び出し側は表示木の集計に倒す
+	 */
+	private aggregateWarnings(node: MapNode): SkillWarning[] | undefined {
+		if (node.kind === 'skill' && node.skill) {
+			return this.model.skillWarnings.get(node.skill.key) ?? [];
+		}
+		if (node.kind === 'section') {
+			switch (node.sectionId) {
+				case 'skills':
+					return this.model.skills.flatMap((s) => this.model.skillWarnings.get(s.key) ?? []);
+				case 'steering':
+					return this.model.steeringWarnings;
+				case 'specs':
+					return this.model.specWarnings;
+				default:
+					return undefined;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * 警告の取得（Tips 操作など、ツリー表示以外からの利用向け）。集計対象
+	 * ノードはモデルから、それ以外は表示木から返す。contextFor / tooltipFor
+	 * と同じ倒し方に揃え、表示上限の先にある警告も Tips から辿れるようにする
+	 */
+	warningsFor(node: MapNode): SkillWarning[] {
+		return this.aggregateWarnings(node) ?? node.allWarnings();
+	}
+
+	/** バッジ用の警告件数（集計対象ノードはモデルから、それ以外は表示木から） */
+	private badgeOf(node: MapNode): number {
+		const agg = this.aggregateWarnings(node);
+		return agg ? badgeCount(agg) : node.badgeWarnings();
+	}
+
 	private descriptionFor(node: MapNode): string | undefined {
 		const warn = (n: number) => (n > 0 ? ` ⚠${n}` : '');
 		// マルチルートで同名が複数あるときだけ、所属フォルダの表示名を付けて見分けられるようにする
@@ -619,16 +745,16 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					// 複数フォルダにまたがる場合は常時ロード合計が意味を持たないため件数表示にする
 					const roots = new Set(this.model.steering.map((u) => u.workspaceRoot));
 					if (roots.size > 1) {
-						return L(`${this.model.steering.length}件`, `${this.model.steering.length}`) + warn(node.badgeWarnings());
+						return L(`${this.model.steering.length}件`, `${this.model.steering.length}`) + warn(this.badgeOf(node));
 					}
 					const always = this.model.alwaysSteeringTokens();
-					return `${L('常時ロード合計', 'Always-loaded total')} ≈${always.toLocaleString()} tok${warn(node.badgeWarnings())}`;
+					return `${L('常時ロード合計', 'Always-loaded total')} ≈${always.toLocaleString()} tok${warn(this.badgeOf(node))}`;
 				}
 				if (node.sectionId === 'skills') {
-					return L(`${this.model.skills.length}件`, `${this.model.skills.length}`) + warn(node.badgeWarnings());
+					return L(`${this.model.skills.length}件`, `${this.model.skills.length}`) + warn(this.badgeOf(node));
 				}
 				if (node.sectionId === 'specs') {
-					return L(`${this.model.specs.length}件`, `${this.model.specs.length}`) + warn(node.badgeWarnings());
+					return L(`${this.model.specs.length}件`, `${this.model.specs.length}`) + warn(this.badgeOf(node));
 				}
 				if (node.sectionId === 'copilot') {
 					const total = this.model.copilot.reduce((s, c) => s + c.tokens, 0);
@@ -639,15 +765,26 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'skill': {
 				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
 				const tag = node.skill ? folderTag(node.skill.name, node.skill.canonical.sourceRoot, this.model.skills.map((s) => ({ name: s.name, root: s.canonical.sourceRoot }))) : '';
-				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(node.badgeWarnings())}${tag}`;
+				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(this.badgeOf(node))}${tag}`;
 			}
 			case 'copy':
 				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(badgeCount(node.warnings)) : L('正本と一致', 'Matches canonical');
-			case 'orphanGroup':
-				return L(`${node.children?.length ?? 0}件`, `${node.children?.length ?? 0}`);
+			case 'orphanGroup': {
+				// 件数は表示木の子数ではなく解析モデルから取る。表示木は総ノード数
+				// 上限で未参照ファイルを省略ノードに畳むため、子数だと省略の有無で
+				// 件数が変わってしまう（表示だけを変えて対象を変えない、という原則）
+				const count = node.unit?.orphans.length ?? node.children?.length ?? 0;
+				return L(`${count}件`, `${count}`);
+			}
 			case 'steering': {
 				const u = node.steeringUnit!;
-				const badge = u.inclusion === 'always' ? L('常時', 'always') : u.inclusion === 'fileMatch' ? L('条件', 'conditional') : L('手動', 'manual');
+				const badge = u.unparsed
+					? L('未解析', 'unparsed')
+					: u.inclusion === 'always'
+						? L('常時', 'always')
+						: u.inclusion === 'fileMatch'
+							? L('条件', 'conditional')
+							: L('手動', 'manual');
 				return `${badge} · ≈${u.tokens.toLocaleString()} tok${warn(badgeCount(node.warnings))}${folderTag(u.name, u.workspaceRoot, this.model.steering.map((x) => ({ name: x.name, root: x.workspaceRoot })))}`;
 			}
 			case 'spec': {
@@ -749,7 +886,10 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.filePath) {
 			parts.push('openable');
 		}
-		if (node.warnings.length > 0 || node.allWarnings().length > 0) {
+		// セクション／スキル単位では表示木ではなくモデルの集計で判定する
+		// （表示上限の先にある警告でも hasWarnings を落とさないため）
+		const aggregated = this.aggregateWarnings(node);
+		if (node.warnings.length > 0 || (aggregated ?? node.allWarnings()).length > 0) {
 			parts.push('hasWarnings');
 		}
 		return parts.join(' ');
@@ -784,7 +924,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 						const total = this.model.steering
 							.filter((u) => u.workspaceRoot === root && u.inclusion === 'always')
 							.reduce((s, u) => s + u.tokens, 0);
-						md.appendMarkdown(`- ${labels.get(root) ?? path.basename(root)}: ${L('常時ロード合計', 'Always-loaded total')} ≈${total.toLocaleString()} tok\n`);
+						md.appendMarkdown(`- ${escapeMarkdownText(labels.get(root) ?? path.basename(root))}: ${L('常時ロード合計', 'Always-loaded total')} ≈${total.toLocaleString()} tok\n`);
 					}
 				} else {
 					md.appendMarkdown(L(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`, `- Always-loaded total (inclusion: always): ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`));
@@ -806,7 +946,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.kind === 'skill' && node.skill) {
 			const unit = node.skill.canonical;
 			const total = totalOwnedTokens(unit);
-			md.appendMarkdown(`**${node.skill.name}**\n\n`);
+			md.appendMarkdown(`**${escapeMarkdownText(node.skill.name)}**\n\n`);
 			md.appendMarkdown(L(`- 合計（重複排除）: ≈${total.toLocaleString()} tok\n`, `- Total (de-duplicated): ≈${total.toLocaleString()} tok\n`));
 			md.appendMarkdown(`- L1 (name + description): ≈${unit.l1Tokens.toLocaleString()} tok\n`);
 			md.appendMarkdown(L(`- L2（SKILL.md 本文）: ≈${unit.skillMdBodyTokens.toLocaleString()} tok\n`, `- L2 (SKILL.md body): ≈${unit.skillMdBodyTokens.toLocaleString()} tok\n`));
@@ -816,7 +956,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			if (!node.skill.canonicalExplicit && node.skill.copies.length > 0) {
 				md.appendMarkdown(L('- 正本の自動判定: canonicalRoots に一致する配置が無いため、先頭の配置を代表としています\n', '- Canonical auto-detection: no location matches canonicalRoots, so the first location is treated as the representative.\n'));
 			}
-			this.appendWarnings(md, node.allWarnings().filter((w) => w.copyDir === undefined).slice(0, 10));
+			// 警告一覧も表示木ではなくモデルから取る（表示上限の先の警告も含める）
+			this.appendWarnings(md, (this.aggregateWarnings(node) ?? node.allWarnings()).filter((w) => w.copyDir === undefined).slice(0, 10));
 			return md;
 		}
 		if (node.kind === 'copy') {
@@ -828,9 +969,18 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.kind === 'steering' && node.steeringUnit) {
 			const u = node.steeringUnit;
 			md.appendMarkdown(`**${escapeMarkdownText(u.filePath)}**\n\n`);
-			md.appendMarkdown(`- inclusion: ${u.inclusion}${u.inclusionExplicit ? '' : L('（未指定＝常時扱い）', ' (not specified = treated as always)')}\n`);
+			if (u.unparsed) {
+				md.appendMarkdown(
+					L(
+						'- inclusion: 未解析（内容を読み取れませんでした。常時ロードかどうかは未確定です）\n',
+						'- inclusion: not parsed (its contents could not be read; whether it is always loaded is unknown)\n',
+					),
+				);
+			} else {
+				md.appendMarkdown(`- inclusion: ${u.inclusion}${u.inclusionExplicit ? '' : L('（未指定＝常時扱い）', ' (not specified = treated as always)')}\n`);
+			}
 			if (u.fileMatchPattern) {
-				md.appendMarkdown(`- fileMatchPattern: \`${u.fileMatchPattern}\`\n`);
+				md.appendMarkdown(`- fileMatchPattern: ${markdownCodeSpan(u.fileMatchPattern)}\n`);
 			}
 			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
 			md.appendMarkdown(L('- Kiro: inclusion に従って自動ロード ／ Copilot: 読まれない\n', '- Kiro: auto-loaded per inclusion / Copilot: not loaded\n'));
@@ -841,7 +991,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			return md;
 		}
 		if (node.kind === 'spec' && node.specUnit) {
-			md.appendMarkdown(`**Spec: ${node.specUnit.name}**\n\n`);
+			md.appendMarkdown(`**Spec: ${escapeMarkdownText(node.specUnit.name)}**\n\n`);
 			if (new Set(this.model.specs.map((x) => x.workspaceRoot)).size > 1) {
 				md.appendMarkdown(`- ${L('フォルダ', 'Folder')}: ${escapeMarkdownText(node.specUnit.workspaceRoot)}\n`);
 			}
@@ -854,7 +1004,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		if (node.kind === 'copilot' && node.copilotUnit) {
 			const u = node.copilotUnit;
 			md.appendMarkdown(`**${escapeMarkdownText(u.filePath)}**\n\n`);
-			md.appendMarkdown(L(`- 読み込み: ${u.mode === 'always' ? '常時（Copilot）' : `applyTo: ${u.applyTo ?? '(未指定)'}`}\n`, `- Loading: ${u.mode === 'always' ? 'always (Copilot)' : `applyTo: ${u.applyTo ?? '(not set)'}`}\n`));
+			md.appendMarkdown(L(`- 読み込み: ${u.mode === 'always' ? '常時（Copilot）' : `applyTo: ${escapeMarkdownText(u.applyTo ?? '(未指定)')}`}\n`, `- Loading: ${u.mode === 'always' ? 'always (Copilot)' : `applyTo: ${escapeMarkdownText(u.applyTo ?? '(not set)')}`}\n`));
 			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
 			md.appendMarkdown(L('- Copilot: 読み込む ／ Kiro: 読まれない\n', '- Copilot: loaded / Kiro: not loaded\n'));
 			return md;
@@ -865,7 +1015,12 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		}
 		md.appendMarkdown(`**${escapeMarkdownText(node.filePath ?? '')}**\n\n`);
 		const own = node.ownTokens;
-		const subtree = node.subtreeTokens();
+		// 配下合計は表示木からではなく解析モデルから計算する。表示木は深さ・
+		// 総ノード数の上限で切り詰められるため、表示木を走査すると上限の先の
+		// ファイルが漏れ、上限未満のときと合計が変わってしまう（表示だけを
+		// 変えて対象を変えない、という原則）。モデルが無いノードだけ表示木に倒す
+		const modelFiles = node.unit?.files ?? node.graph?.files;
+		const subtree = modelFiles && node.filePath ? reachableTokens(modelFiles, node.filePath) : node.subtreeTokens();
 		const pathFiles = node.pathFiles();
 		md.appendMarkdown(L(`- このファイル: ≈${own.toLocaleString()} tok\n`, `- This file: ≈${own.toLocaleString()} tok\n`));
 		if (subtree !== own) {
@@ -935,10 +1090,33 @@ function copyRootLabel(dir: string): string {
 }
 
 /**
- * Markdown テキストへ埋め込む文字列の `\` を二重化する。
- * Windows パスでは `\` の直後が句読点（例: `\.`）だと Markdown のエスケープとして
- * 消費されて区切りが消えて表示される（例: `OmniView-Solo\.kiro` → `OmniView-Solo.kiro`）。
+ * Markdown テキストへ埋め込む文字列をエスケープする。
+ * - `\` の二重化: Windows パスでは `\` の直後が句読点（例: `\.`）だと Markdown の
+ *   エスケープとして消費されて区切りが消えて表示される（例: `OmniView-Solo\.kiro`
+ *   → `OmniView-Solo.kiro`）ため。
+ * - リンク構文を壊す文字（`[`、`]`、`<`、`>`、バッククォート）のエスケープ:
+ *   ツールチップは isTrusted（許可コマンド限定）なので、埋め込む文字列が
+ *   `[表示文](command:...)` の形を作れると任意コマンドのリンクになりうる。
+ *   スキル名・Spec 名・fileMatchPattern・警告文など、リポジトリ側が書ける文字列は
+ *   すべてここを通してから埋め込むこと。
  */
 function escapeMarkdownText(text: string): string {
-	return text.replace(/\\/g, '\\\\');
+	return text.replace(/\\/g, '\\\\').replace(/([[\]<>`])/g, '\\$1');
+}
+
+/**
+ * 文字列を Markdown のコードスパンとして埋め込む。
+ * コードスパン内ではバックスラッシュエスケープが効かない（ `\` はそのまま
+ * 表示される）ため、通常テキスト用の escapeMarkdownText を適用すると
+ * `src/[ab].ts` が `src/\[ab\].ts` と表示されてしまう。代わりに、入力に
+ * 含まれる最長のバッククォート列より長いフェンスで囲み、入力中の
+ * バッククォートでスパンが途中で閉じないようにする（内容自体は無加工）。
+ */
+function markdownCodeSpan(text: string): string {
+	const longest = (text.match(/`+/g) ?? []).reduce((m, r) => Math.max(m, r.length), 0);
+	if (longest === 0) {
+		return `\`${text}\``;
+	}
+	const fence = '`'.repeat(longest + 1);
+	return `${fence} ${text} ${fence}`;
 }

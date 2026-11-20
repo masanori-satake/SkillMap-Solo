@@ -37,8 +37,9 @@ export function renderLoadMatrix(
 	const copilotLabels = labelsFor(copilot.map((c) => c.workspaceRoot));
 	const specLabels = labelsFor(specs.map((s) => s.workspaceRoot));
 	for (const s of steering) {
-		const when =
-			s.inclusion === 'always'
+		const when = s.unparsed
+			? L('未解析（内容を読み取れませんでした）', 'Not parsed (contents could not be read)')
+			: s.inclusion === 'always'
 				? L('常時', 'Always')
 				: s.inclusion === 'fileMatch'
 					? L(`条件一致時（${s.fileMatchPattern ?? 'パターンなし'}）`, `On match (${s.fileMatchPattern ?? 'no pattern'})`)

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { buildUnit, findSkillDirs, groupSkills, listAllFiles, scopeRootFor } from './skills.js';
+import { buildUnit, findSkillDirs, groupSkills, isRealPathInside, listAllFiles, scopeRootFor } from './skills.js';
 import {
 	discoverCopilot,
 	discoverSpecs,
@@ -46,6 +46,12 @@ class MatrixContentProvider implements vscode.TextDocumentContentProvider {
 interface Settings {
 	canonicalRoots: string[];
 	skillsRoots: string[];
+	/** skillsRoots がユーザー設定（または既定）由来か。ワークスペース設定由来の
+	 * 場合は探索範囲をワークスペースフォルダ配下に制限する（指摘: リポジトリ同梱の
+	 * .vscode/settings.json で本人の想定外の場所を走査しないため） */
+	skillsRootsTrusted: boolean;
+	/** canonicalRoots がユーザー設定（または既定）由来か。同上 */
+	canonicalRootsTrusted: boolean;
 	rules: RuleSettings;
 	betaSpecs: boolean;
 	betaLoadSimulation: boolean;
@@ -65,13 +71,27 @@ function readSettings(): Settings {
 			DEFAULT_RULE_SETTINGS.steeringAlwaysTokenBudget,
 		),
 	};
+	// 設定の由来（ユーザー設定かワークスペース設定か）を inspect で見分ける。
+	// ワークスペース設定はクローンしたリポジトリに同梱されうるため、由来によって
+	// 探索ルートの扱いを変える（rebuild 側で範囲制限する）
+	const skillsInsp = cfg.inspect<string[]>('skillsRoots');
+	const canonicalInsp = cfg.inspect<string[]>('canonicalRoots');
 	return {
 		canonicalRoots: cfg.get<string[]>('canonicalRoots', ['.agents']),
 		skillsRoots: cfg.get<string[]>('skillsRoots', []),
+		skillsRootsTrusted: skillsInsp?.workspaceValue === undefined && skillsInsp?.workspaceFolderValue === undefined,
+		canonicalRootsTrusted:
+			canonicalInsp?.workspaceValue === undefined && canonicalInsp?.workspaceFolderValue === undefined,
 		rules,
 		betaSpecs: cfg.get<boolean>('beta.specs', true),
 		betaLoadSimulation: cfg.get<boolean>('beta.loadSimulation', true),
 	};
+}
+
+/** target が base 配下（または base 自身）にあるか */
+function isPathInside(base: string, target: string): boolean {
+	const rel = path.relative(base, target);
+	return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
 }
 
 function severityOf(w: SkillWarning): vscode.DiagnosticSeverity {
@@ -197,7 +217,26 @@ export function activate(context: vscode.ExtensionContext): void {
 		simBar.show();
 	};
 
+	let lastRebuildError = '';
 	const rebuild = () => {
+		try {
+			rebuildInner();
+			lastRebuildError = '';
+		} catch (err) {
+			// 失敗時は前回モデルを保持する（モデルの差し替えは rebuildInner の
+			// 終盤でのみ行われるため、途中で例外が出ても表示は前回のまま残る）。
+			// 同じエラーの繰り返し通知は避ける
+			const message = err instanceof Error ? err.message : String(err);
+			if (message !== lastRebuildError) {
+				lastRebuildError = message;
+				void vscode.window.showErrorMessage(
+					L(`SkillMap の再構築に失敗しました: ${message}`, `SkillMap rebuild failed: ${message}`),
+				);
+			}
+		}
+	};
+
+	const rebuildInner = () => {
 		currentSettings = readSettings();
 		const settings = currentSettings;
 		const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
@@ -212,21 +251,36 @@ export function activate(context: vscode.ExtensionContext): void {
 		// フォルダ内の全ファイルは rebuild につき1回だけ列挙し、発見・解決索引・
 		// パターン評価で共有する（以前は処理ごとに歩き直して応答を落としていた）
 		const knownFiles = new Map(scanRoots.map((r) => [r, listAllFiles(r)] as const));
-		// 追加の探索ルート: 相対指定は各ワークスペースフォルダごとに解決する（マルチルート対応）
+		// 追加の探索ルート: 相対指定は各ワークスペースフォルダごとに解決する（マルチルート対応）。
+		// ワークスペース設定由来の場合は、解決先がワークスペースフォルダ配下に
+		// 収まるものだけを採用する（絶対パスや ../.. でのフォルダ外走査を防ぐ）。
+		// 字句上の内包だけでは、フォルダ配下のシンボリックリンクがフォルダ外を
+		// 指す場合を防げないため、実体パス（realpath）でも内包を判定し、
+		// 解決できない探索先は採用しない。ユーザー設定由来は従来どおり制限しない
 		const extraRoots: string[] = [];
 		for (const r of settings.skillsRoots) {
 			if (path.isAbsolute(r)) {
-				extraRoots.push(r);
+				if (settings.skillsRootsTrusted || scanRoots.some((w) => isPathInside(w, r) && isRealPathInside(w, r))) {
+					extraRoots.push(r);
+				}
 			} else {
 				for (const w of scanRoots) {
-					extraRoots.push(path.join(w, r));
+					const resolved = path.resolve(w, r);
+					if (settings.skillsRootsTrusted || (isPathInside(w, resolved) && isRealPathInside(w, resolved))) {
+						extraRoots.push(resolved);
+					}
 				}
 			}
 		}
+		// canonicalRoots も同様に、ワークスペース設定由来なら相対かつフォルダ外へ
+		// 出ない指定だけを採用する（path.join で外を指す指定を排除）
+		const canonicalRoots = settings.canonicalRootsTrusted
+			? settings.canonicalRoots
+			: settings.canonicalRoots.filter((r) => !path.isAbsolute(r) && !r.split(/[\\/]/).includes('..'));
 		// Skills（グルーピングのスコープは scopeRootFor: フォルダ内はフォルダ単位に揃える）
 		const dirs = findSkillDirs(scanRoots, extraRoots, knownFiles);
 		const units = dirs.map((d) => buildUnit(d, scopeRootFor(d, workspaceRoots, extraRoots)));
-		const skills = groupSkills(units, settings.canonicalRoots);
+		const skills = groupSkills(units, canonicalRoots);
 		const skillWarnings = new Map<string, SkillWarning[]>();
 		const allWarnings: SkillWarning[] = [];
 		for (const skill of skills) {
@@ -235,7 +289,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			allWarnings.push(...w);
 		}
 		// Steering / Specs / Copilot
-		const steering = discoverSteering(scanRoots, settings.canonicalRoots, knownFiles);
+		const steering = discoverSteering(scanRoots, canonicalRoots, knownFiles, settings.canonicalRootsTrusted);
 		// 相対パス一覧は fileMatch な Steering の死パターン判定（S2）でしか使わない。
 		// 必要なときだけ作る（全ファイル分の変換は走査と同程度に重いため）
 		const relPathsByRoot = steering.some((u) => u.inclusion === 'fileMatch')
@@ -381,7 +435,9 @@ export function activate(context: vscode.ExtensionContext): void {
 			let ruleId: string | undefined;
 			let warningMessage: string | undefined;
 			if (arg instanceof MapNode) {
-				const first = arg.warnings[0] ?? arg.allWarnings()[0];
+				// 表示木だけでは表示上限の先にある警告を辿れないため、プロバイダ
+				// 経由でモデルの集計も見る（hasWarnings の判定と同じ倒し方）
+				const first = arg.warnings[0] ?? provider.warningsFor(arg)[0];
 				ruleId = first?.ruleId;
 				warningMessage = first?.message;
 			} else if (arg && typeof arg === 'object') {

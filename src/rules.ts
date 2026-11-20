@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { isTentativeMention, type LogicalSkill, type SkillUnit } from './skills.js';
+import { isTentativeMention, type LogicalSkill, type RefEdge, type SkillUnit } from './skills.js';
 import { L } from './i18n.js';
 
 export type Severity = 'error' | 'warn' | 'info';
@@ -413,26 +413,42 @@ export function driftBetween(canonical: SkillUnit, copy: SkillUnit): Drift {
 function findCycles(unit: SkillUnit): Array<{ from: string; line: number; to: string }> {
 	const cycles: Array<{ from: string; line: number; to: string }> = [];
 	const visited = new Set<string>();
+	// 現在の DFS 経路（循環判定用）。Set 版も併せ持ち、経路長に対して線形に保つ
 	const stack: string[] = [];
-	const dfs = (current: string) => {
+	const onStack = new Set<string>();
+	// 再帰 DFS と同じ順序・同じ検出結果を保ちながら、明示スタックで反復する。
+	// 参照チェーンの長さがそのままコールスタックの深さになると、数千段の
+	// チェーンで RangeError になり再構築全体が失敗するため
+	interface Frame {
+		current: string;
+		edges: RefEdge[];
+		index: number;
+	}
+	const frames: Frame[] = [];
+	const enter = (current: string): void => {
 		visited.add(current);
 		stack.push(current);
-		const info = unit.files.get(current);
-		if (info) {
-			for (const edge of info.refs) {
-				if (!edge.exists || edge.isDirectory) {
-					continue;
-				}
-				if (stack.includes(edge.target)) {
-					cycles.push({ from: current, line: edge.line, to: edge.target });
-				} else if (!visited.has(edge.target)) {
-					dfs(edge.target);
-				}
-			}
-		}
-		stack.pop();
+		onStack.add(current);
+		frames.push({ current, edges: unit.files.get(current)?.refs ?? [], index: 0 });
 	};
-	dfs(unit.skillMdPath);
+	enter(unit.skillMdPath);
+	while (frames.length > 0) {
+		const frame = frames[frames.length - 1];
+		if (frame.index >= frame.edges.length) {
+			frames.pop();
+			onStack.delete(stack.pop()!);
+			continue;
+		}
+		const edge = frame.edges[frame.index++];
+		if (!edge.exists || edge.isDirectory) {
+			continue;
+		}
+		if (onStack.has(edge.target)) {
+			cycles.push({ from: frame.current, line: edge.line, to: edge.target });
+		} else if (!visited.has(edge.target)) {
+			enter(edge.target);
+		}
+	}
 	return cycles;
 }
 
@@ -610,11 +626,13 @@ export function evaluateSteering(
 		}
 		// S1: inclusion 未指定
 		// ただし Kiro が自動生成する予約 Steering（.kiro/steering 直下の product/structure/tech）は
-		// 常時ロードが前提の設計で inclusion を書かないのが正規の形のため、警告から除外する
+		// 常時ロードが前提の設計で inclusion を書かないのが正規の形のため、警告から除外する。
+		// また未解析（サイズ上限超など）のファイルは inclusion が未確定であり、
+		// 「未指定」とは言えないため除外する
 		const isKiroReserved =
 			['product.md', 'structure.md', 'tech.md'].includes(path.basename(unit.filePath)) &&
 			path.basename(path.dirname(unit.filePath)) === 'steering';
-		if (!unit.inclusionExplicit && !isKiroReserved) {
+		if (!unit.inclusionExplicit && !isKiroReserved && !unit.unparsed) {
 			warnings.push({
 				ruleId: 'S1',
 				severity: 'info',
@@ -666,7 +684,8 @@ export function evaluateSteering(
 			byRoot.set(u.workspaceRoot, arr);
 		}
 		for (const rootUnits of byRoot.values()) {
-			const alwaysUnits = rootUnits.filter((u) => u.inclusion === 'always');
+			// 未解析のファイルは適用条件が未確定なので常時ロードに数えない
+			const alwaysUnits = rootUnits.filter((u) => u.inclusion === 'always' && !u.unparsed);
 			const total = alwaysUnits.reduce((s, u) => s + u.tokens, 0);
 			if (total > settings.steeringAlwaysTokenBudget) {
 				warnings.push({

@@ -87,6 +87,69 @@ export interface LogicalSkill {
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'out', '.vscode-test']);
 const MAX_WALK_DEPTH = 10;
 
+/**
+ * テキストとして読み込むファイルのサイズ上限（バイト）。
+ * ワークスペースはクローンした第三者リポジトリでありうるため、内容は信頼できない
+ * 入力として扱う。巨大ファイルを全量読みすると拡張ホストのメモリを圧迫するので、
+ * 上限を超えるファイルはテキストとして扱わない（トークン 0・参照なし）。
+ * ハッシュだけは分割読みで求めるため、ドリフト検出（R11）は従来どおり働く。
+ */
+export const MAX_TEXT_FILE_BYTES = 1024 * 1024;
+
+/** 参照抽出の対象にする1行の長さ上限（文字数）。これより長い行は切り詰めて抽出する */
+const MAX_EXTRACT_LINE_LENGTH = 100_000;
+
+/**
+ * ファイルの SHA-1 を分割読みで求める（全量をメモリに載せない）。
+ * 通常ファイルでないもの（FIFO・デバイス等）は読まずに undefined を返す。
+ * FIFO を open すると書き手が現れるまでブロックし、デバイスファイルでは
+ * 無限に読み続けるおそれがあるため、読み込み前の判定が必須。
+ */
+export function sha1FileSync(absPath: string): string | undefined {
+	let st: fs.Stats;
+	try {
+		st = fs.statSync(absPath);
+	} catch {
+		return undefined;
+	}
+	if (!st.isFile()) {
+		return undefined;
+	}
+	try {
+		const hash = crypto.createHash('sha1');
+		const fd = fs.openSync(absPath, 'r');
+		try {
+			const chunk = Buffer.alloc(64 * 1024);
+			let read: number;
+			while ((read = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+				hash.update(chunk.subarray(0, read));
+			}
+		} finally {
+			fs.closeSync(fd);
+		}
+		return hash.digest('hex');
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * シンボリックリンクを解決した実体パスでも target が base 配下にあるか。
+ * 字句上の内包判定（path.relative）は、base 配下のリンクがフォルダ外を指す
+ * 場合に回避できてしまうため、ワークスペース設定由来など信頼できない指定の
+ * 検証ではこちらを使う。どちらかが解決できなければ false（採用しない）。
+ */
+export function isRealPathInside(base: string, target: string): boolean {
+	try {
+		const realBase = fs.realpathSync(base);
+		const realTarget = fs.realpathSync(target);
+		const rel = path.relative(realBase, realTarget);
+		return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
+	} catch {
+		return false;
+	}
+}
+
 function isProbablyText(buf: Buffer): boolean {
 	const len = Math.min(buf.length, 8192);
 	for (let i = 0; i < len; i++) {
@@ -143,7 +206,10 @@ export function findSkillDirs(workspaceRoots: string[], extraRoots: string[], kn
 	return [...found].sort();
 }
 
-const LINK_RE = /\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+// 各部に長さ上限を設けた形。無制限の `[^\]]*` は、`]` を含まない長い行で
+// 各 `[` の位置から行末まで走査し直すため二次関数的に遅くなる（実測: `[` のみ
+// 100KB の1行で約25秒）。上限付きなら1位置あたりの走査量が一定に収まり線形になる。
+const LINK_RE = /\[([^\]]{0,300})\]\(([^)\s]{1,2048})(?:\s+"[^"]{0,300}")?\)/g;
 const CODE_SPAN_RE = /`([^`\n]+)`/g;
 // パス・ファイル名の候補は、構文記号（括弧・引用符・演算子・グロブ等）を含むものを
 // 除外文字方式で弾く。`targets[i].name` のような式をファイル名と誤認しないため。
@@ -282,7 +348,9 @@ export function extractReferences(fromFile: string, text: string, resCtx?: Resol
 	};
 	const lines = text.split(/\r?\n/);
 	for (let i = 0; i < lines.length; i++) {
-		const lineText = lines[i];
+		// 極端に長い行（生成ドキュメントや1行 JSON 等）は切り詰めてから抽出する。
+		// LINK_RE 側の上限と合わせて、抽出コストを行長に対して線形に保つため
+		const lineText = lines[i].slice(0, MAX_EXTRACT_LINE_LENGTH);
 		let m: RegExpExecArray | null;
 		LINK_RE.lastIndex = 0;
 		while ((m = LINK_RE.exec(lineText)) !== null) {
@@ -325,18 +393,36 @@ function contentOf(absPath: string, st: fs.Stats): ContentCacheEntry {
 	if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
 		return hit;
 	}
-	const buf = fs.readFileSync(absPath);
 	const entry: ContentCacheEntry = {
 		mtimeMs: st.mtimeMs,
 		size: st.size,
 		tokens: 0,
 		lines: 0,
-		hash: crypto.createHash('sha1').update(buf).digest('hex'),
+		hash: '',
 	};
-	if (isProbablyText(buf)) {
-		entry.text = buf.toString('utf8');
-		entry.tokens = estimateTokens(entry.text);
-		entry.lines = countLines(entry.text);
+	if (!st.isFile()) {
+		// FIFO・デバイス等の通常ファイルでないものは読まない（open のブロックや
+		// 無限読みを避ける）。ハッシュなし（fileHash は undefined を返す）
+	} else if (st.size > MAX_TEXT_FILE_BYTES) {
+		// サイズ上限を超える通常ファイルは内容を読まず、ハッシュだけ分割読みで
+		// 求める（ドリフト検出は維持し、メモリには載せない）
+		const hash = sha1FileSync(absPath);
+		if (hash === undefined) {
+			// 通常ファイルなのにハッシュを求められなかった（一時的な読み取り
+			// 失敗など）。「ハッシュなし」をキャッシュしてしまうと、mtime と
+			// サイズが同じ間は再試行されず fileHashes から欠落し続けるため、
+			// このエントリはキャッシュに登録せずに返す（次回に再試行できる）
+			return entry;
+		}
+		entry.hash = hash;
+	} else {
+		const buf = fs.readFileSync(absPath);
+		entry.hash = crypto.createHash('sha1').update(buf).digest('hex');
+		if (isProbablyText(buf)) {
+			entry.text = buf.toString('utf8');
+			entry.tokens = estimateTokens(entry.text);
+			entry.lines = countLines(entry.text);
+		}
 	}
 	if (contentCache.size >= CONTENT_CACHE_LIMIT) {
 		contentCache.clear();
@@ -352,7 +438,8 @@ export function fileHash(absPath: string): string | undefined {
 		if (st.isDirectory()) {
 			return undefined;
 		}
-		return contentOf(absPath, st).hash;
+		// 通常ファイルでないものは contentOf がハッシュを持たない（空文字）
+		return contentOf(absPath, st).hash || undefined;
 	} catch {
 		return undefined;
 	}
@@ -371,7 +458,7 @@ export function readFileInfo(absPath: string, skillDir: string, resCtx?: Resolut
 		const st = fs.statSync(absPath);
 		exists = true;
 		isDirectory = st.isDirectory();
-		if (!isDirectory) {
+		if (st.isFile()) {
 			const entry = contentOf(absPath, st);
 			text = entry.text;
 			tokens = entry.tokens;
@@ -630,6 +717,37 @@ export interface FileGraph {
 	files: Map<string, FileInfo>;
 	depthDisplay: Map<string, number>;
 	reachable: Set<string>;
+}
+
+/**
+ * 起点ファイルから参照を辿って到達できるファイルのトークン合計（重複排除）。
+ * ツリーの「配下合計」は表示木からではなく、この解析モデル（files）から
+ * 計算する。表示側には深さ・総ノード数の上限があり、表示木を走査すると
+ * 上限の先にあるファイルが合計から漏れ、上限未満のときと値が変わってしまう
+ * （表示だけを変えて対象を変えない、という原則に反する）ため。
+ */
+export function reachableTokens(files: Map<string, FileInfo>, rootPath: string): number {
+	const seen = new Set<string>();
+	const queue = [rootPath];
+	let total = 0;
+	while (queue.length > 0) {
+		const p = queue.shift()!;
+		if (seen.has(p)) {
+			continue;
+		}
+		seen.add(p);
+		const info = files.get(p);
+		if (!info) {
+			continue;
+		}
+		total += info.tokens;
+		for (const edge of info.refs) {
+			if (edge.exists && !edge.isDirectory && !seen.has(edge.target)) {
+				queue.push(edge.target);
+			}
+		}
+	}
+	return total;
 }
 
 export function buildFileGraph(rootPath: string, ownedDir: string, resCtx?: ResolutionContext): FileGraph {
