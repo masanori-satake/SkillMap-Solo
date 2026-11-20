@@ -406,15 +406,25 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			group.skill = skill;
 			group.unit = skill.canonical;
 			group.parent = root;
-			group.children = skill.canonical.orphans.map((orphanPath) => {
+			// 未参照ファイルも共有予算を消費する。予算を消費しない経路があると、
+			// 参照されていないファイルが大量にあるスキルで総ノード数の上限が
+			// 成立しない。予算到達後は残りを個別には作らず、省略を1ノードにまとめる
+			const orphanChildren: MapNode[] = [];
+			for (const orphanPath of skill.canonical.orphans) {
+				if (this.nodeBudget <= 0) {
+					orphanChildren.push(this.makeOmittedNode(group, skill, skill.canonical));
+					break;
+				}
+				this.nodeBudget--;
 				const orphan = new MapNode('orphan');
 				orphan.skill = skill;
 				orphan.unit = skill.canonical;
 				orphan.filePath = orphanPath;
 				orphan.parent = group;
 				orphan.warnings = warnings.filter((w) => w.file === orphanPath);
-				return orphan;
-			});
+				orphanChildren.push(orphan);
+			}
+			group.children = orphanChildren;
 			children.push(group);
 		}
 		for (const copy of skill.copies) {
