@@ -435,7 +435,9 @@ export function activate(context: vscode.ExtensionContext): void {
 			let ruleId: string | undefined;
 			let warningMessage: string | undefined;
 			if (arg instanceof MapNode) {
-				const first = arg.warnings[0] ?? arg.allWarnings()[0];
+				// 表示木だけでは表示上限の先にある警告を辿れないため、プロバイダ
+				// 経由でモデルの集計も見る（hasWarnings の判定と同じ倒し方）
+				const first = arg.warnings[0] ?? provider.warningsFor(arg)[0];
 				ruleId = first?.ruleId;
 				warningMessage = first?.message;
 			} else if (arg && typeof arg === 'object') {

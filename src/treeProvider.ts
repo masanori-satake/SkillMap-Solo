@@ -713,6 +713,15 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		return undefined;
 	}
 
+	/**
+	 * 警告の取得（Tips 操作など、ツリー表示以外からの利用向け）。集計対象
+	 * ノードはモデルから、それ以外は表示木から返す。contextFor / tooltipFor
+	 * と同じ倒し方に揃え、表示上限の先にある警告も Tips から辿れるようにする
+	 */
+	warningsFor(node: MapNode): SkillWarning[] {
+		return this.aggregateWarnings(node) ?? node.allWarnings();
+	}
+
 	/** バッジ用の警告件数（集計対象ノードはモデルから、それ以外は表示木から） */
 	private badgeOf(node: MapNode): number {
 		const agg = this.aggregateWarnings(node);
@@ -760,8 +769,13 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			}
 			case 'copy':
 				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(badgeCount(node.warnings)) : L('正本と一致', 'Matches canonical');
-			case 'orphanGroup':
-				return L(`${node.children?.length ?? 0}件`, `${node.children?.length ?? 0}`);
+			case 'orphanGroup': {
+				// 件数は表示木の子数ではなく解析モデルから取る。表示木は総ノード数
+				// 上限で未参照ファイルを省略ノードに畳むため、子数だと省略の有無で
+				// 件数が変わってしまう（表示だけを変えて対象を変えない、という原則）
+				const count = node.unit?.orphans.length ?? node.children?.length ?? 0;
+				return L(`${count}件`, `${count}`);
+			}
 			case 'steering': {
 				const u = node.steeringUnit!;
 				const badge = u.unparsed
@@ -958,8 +972,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			if (u.unparsed) {
 				md.appendMarkdown(
 					L(
-						'- inclusion: 未解析（サイズ上限を超えるため内容を読んでいません。常時ロードかどうかは未確定です）\n',
-						'- inclusion: not parsed (the file exceeds the size limit, so its contents were not read; whether it is always loaded is unknown)\n',
+						'- inclusion: 未解析（内容を読み取れませんでした。常時ロードかどうかは未確定です）\n',
+						'- inclusion: not parsed (its contents could not be read; whether it is always loaded is unknown)\n',
 					),
 				);
 			} else {

@@ -70,3 +70,22 @@ test('ロードマトリクス: 未解析の Steering は「常時」ではな�
 	const mdParsed = renderLoadMatrix([], [steeringUnit(false)], [], []);
 	assert.ok(mdParsed.includes('| 常時 |'), '解析できた always は従来どおり「常時」と表示する');
 });
+
+test('ロードマトリクス: 未解析の理由をサイズ上限超と断定しない', () => {
+	// unparsed はサイズ上限超のほか、通常ファイルでない・読み取り失敗でも立つ。
+	// 理由を保持していないので、表示で特定の原因を断定してはいけない
+	const unit: import('../contexts.js').SteeringUnit = {
+		kind: 'steering',
+		filePath: '/r/.kiro/steering/unreadable.md',
+		workspaceRoot: '/r',
+		name: 'unreadable',
+		inclusion: 'always',
+		inclusionExplicit: false,
+		unparsed: true,
+		tokens: 0,
+		graph: { rootPath: '/r/.kiro/steering/unreadable.md', ownedDir: '/r/.kiro/steering', files: new Map(), depthDisplay: new Map(), reachable: new Set() },
+	};
+	const md = renderLoadMatrix([], [unit], [], []);
+	assert.match(md, /未解析（内容を読み取れませんでした）/);
+	assert.doesNotMatch(md, /サイズ上限/, '未解析の原因をサイズ上限超と断定しない');
+});
