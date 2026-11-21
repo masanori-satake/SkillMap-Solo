@@ -5,6 +5,7 @@ import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
 import { L } from './i18n.js';
+import { escapeMarkdownText } from './markdown.js';
 import type { CopyTreeNode } from './copyTree.js';
 
 export type NodeKind =
@@ -1089,20 +1090,10 @@ function copyRootLabel(dir: string): string {
 	return parts.length >= 2 ? parts[parts.length - 2] : path.basename(dir);
 }
 
-/**
- * Markdown テキストへ埋め込む文字列をエスケープする。
- * - `\` の二重化: Windows パスでは `\` の直後が句読点（例: `\.`）だと Markdown の
- *   エスケープとして消費されて区切りが消えて表示される（例: `OmniView-Solo\.kiro`
- *   → `OmniView-Solo.kiro`）ため。
- * - リンク構文を壊す文字（`[`、`]`、`<`、`>`、バッククォート）のエスケープ:
- *   ツールチップは isTrusted（許可コマンド限定）なので、埋め込む文字列が
- *   `[表示文](command:...)` の形を作れると任意コマンドのリンクになりうる。
- *   スキル名・Spec 名・fileMatchPattern・警告文など、リポジトリ側が書ける文字列は
- *   すべてここを通してから埋め込むこと。
- */
-function escapeMarkdownText(text: string): string {
-	return text.replace(/\\/g, '\\\\').replace(/([[\]<>`])/g, '\\$1');
-}
+// escapeMarkdownText は src/markdown.ts の共通実装を使う（ツールチップは
+// isTrusted（許可コマンド限定）なので、埋め込む文字列が `[表示文](command:...)`
+// の形を作れると任意コマンドのリンクになりうる。対策水準を生成系と揃えるため、
+// ロード行列・Tips と同じ関数を通すこと）
 
 /**
  * 文字列を Markdown のコードスパンとして埋め込む。

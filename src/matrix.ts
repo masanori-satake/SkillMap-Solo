@@ -3,6 +3,7 @@ import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { rootLabels, type LogicalSkill } from './skills.js';
 import { totalOwnedTokens } from './rules.js';
 import { L } from './i18n.js';
+import { escapeMarkdownText } from './markdown.js';
 
 /** ツール別ロードマトリクスを Markdown で組み立てる（表示層から分離） */
 export function renderLoadMatrix(
@@ -22,7 +23,9 @@ export function renderLoadMatrix(
 		L('| ファイル | Copilot | Kiro | 推定トークン |', '| File | Copilot | Kiro | Est. tokens |'),
 		'|---|---|---|---:|',
 	];
-	const esc = (s: string) => s.replace(/\|/g, '\\|');
+	// テーブルセル用: 共通エスケープ（リンク構文を壊す文字・バックスラッシュ）に
+	// 加えて、セル区切りの `|` も逃がす
+	const esc = (s: string) => escapeMarkdownText(s).replace(/\|/g, '\\|');
 	const notLoaded = L('読まれない', 'Not loaded');
 	// マルチルートでは同名ファイル（AGENTS.md 等）が並んで判別できないため、
 	// そのカテゴリが複数フォルダにまたがる場合は行にフォルダ名を付ける
@@ -42,7 +45,7 @@ export function renderLoadMatrix(
 			: s.inclusion === 'always'
 				? L('常時', 'Always')
 				: s.inclusion === 'fileMatch'
-					? L(`条件一致時（${s.fileMatchPattern ?? 'パターンなし'}）`, `On match (${s.fileMatchPattern ?? 'no pattern'})`)
+					? L(`条件一致時（${esc(s.fileMatchPattern ?? 'パターンなし')}）`, `On match (${esc(s.fileMatchPattern ?? 'no pattern')})`)
 					: L('手動のみ', 'Manual only');
 		lines.push(`| .kiro/steering/${esc(path.basename(s.filePath))}${tagFor(steeringLabels, s.workspaceRoot)} | ${notLoaded} | ${when} | ≈${s.tokens.toLocaleString()} |`);
 	}
@@ -64,7 +67,7 @@ export function renderLoadMatrix(
 		);
 	}
 	for (const c of copilot) {
-		const when = c.mode === 'always' ? L('常時', 'Always') : L(`条件一致時（applyTo: ${c.applyTo ?? '未指定'}）`, `On match (applyTo: ${c.applyTo ?? 'not set'})`);
+		const when = c.mode === 'always' ? L('常時', 'Always') : L(`条件一致時（applyTo: ${esc(c.applyTo ?? '未指定')}）`, `On match (applyTo: ${esc(c.applyTo ?? 'not set')})`);
 		lines.push(`| ${esc(c.name)}${tagFor(copilotLabels, c.workspaceRoot)} | ${when} | ${notLoaded} | ≈${c.tokens.toLocaleString()} |`);
 	}
 	for (const spec of specs) {

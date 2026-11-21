@@ -57,18 +57,51 @@ interface Settings {
 	betaLoadSimulation: boolean;
 }
 
+/**
+ * 文字列配列の設定値。settings.json の直接編集で型違い（文字列など）が
+ * 入っていた場合は既定値に倒し、配列でも文字列でない要素は落とす。
+ * 特に skillsRoots が文字列だと文字単位で反復され、'/' のような1文字が
+ * 絶対パスとして採用されてしまうため、ここで型を保証する。
+ */
+function stringArraySetting(value: unknown, fallback: string[]): string[] {
+	if (!Array.isArray(value)) {
+		return [...fallback];
+	}
+	return value.filter((v): v is string => typeof v === 'string');
+}
+
+/** 数値の設定値。有限数でなければ既定値に倒し、[0, max] にクランプする */
+function numberSetting(value: unknown, fallback: number, max: number): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		return fallback;
+	}
+	return Math.min(Math.max(value, 0), max);
+}
+
+/** 真偽値の設定値。真偽値でなければ既定値に倒す */
+function booleanSetting(value: unknown, fallback: boolean): boolean {
+	return typeof value === 'boolean' ? value : fallback;
+}
+
+/** orphanFiles の設定値。許可された文字列でなければ既定値に倒す */
+function orphanFilesSetting(value: unknown): RuleSettings['orphanFiles'] {
+	return value === 'off' || value === 'info' || value === 'warn' ? value : DEFAULT_RULE_SETTINGS.orphanFiles;
+}
+
 function readSettings(): Settings {
 	const cfg = vscode.workspace.getConfiguration('skillmap');
+	const num = (key: string, fallback: number, max: number) => numberSetting(cfg.get<unknown>(key), fallback, max);
 	const rules: RuleSettings = {
-		skillBodyMaxLines: cfg.get<number>('rules.skillBodyMaxLines', DEFAULT_RULE_SETTINGS.skillBodyMaxLines),
-		skillBodyMaxTokens: cfg.get<number>('rules.skillBodyMaxTokens', DEFAULT_RULE_SETTINGS.skillBodyMaxTokens),
-		descriptionMaxLength: cfg.get<number>('rules.descriptionMaxLength', DEFAULT_RULE_SETTINGS.descriptionMaxLength),
-		maxReferenceDepth: cfg.get<number>('rules.maxReferenceDepth', DEFAULT_RULE_SETTINGS.maxReferenceDepth),
-		skillTotalTokenBudget: cfg.get<number>('rules.skillTotalTokenBudget', DEFAULT_RULE_SETTINGS.skillTotalTokenBudget),
-		orphanFiles: cfg.get<'off' | 'info' | 'warn'>('rules.orphanFiles', DEFAULT_RULE_SETTINGS.orphanFiles),
-		steeringAlwaysTokenBudget: cfg.get<number>(
+		skillBodyMaxLines: num('rules.skillBodyMaxLines', DEFAULT_RULE_SETTINGS.skillBodyMaxLines, 100_000),
+		skillBodyMaxTokens: num('rules.skillBodyMaxTokens', DEFAULT_RULE_SETTINGS.skillBodyMaxTokens, 10_000_000),
+		descriptionMaxLength: num('rules.descriptionMaxLength', DEFAULT_RULE_SETTINGS.descriptionMaxLength, 100_000),
+		maxReferenceDepth: num('rules.maxReferenceDepth', DEFAULT_RULE_SETTINGS.maxReferenceDepth, 100),
+		skillTotalTokenBudget: num('rules.skillTotalTokenBudget', DEFAULT_RULE_SETTINGS.skillTotalTokenBudget, 100_000_000),
+		orphanFiles: orphanFilesSetting(cfg.get<unknown>('rules.orphanFiles')),
+		steeringAlwaysTokenBudget: num(
 			'rules.steeringAlwaysTokenBudget',
 			DEFAULT_RULE_SETTINGS.steeringAlwaysTokenBudget,
+			100_000_000,
 		),
 	};
 	// 設定の由来（ユーザー設定かワークスペース設定か）を inspect で見分ける。
@@ -77,14 +110,14 @@ function readSettings(): Settings {
 	const skillsInsp = cfg.inspect<string[]>('skillsRoots');
 	const canonicalInsp = cfg.inspect<string[]>('canonicalRoots');
 	return {
-		canonicalRoots: cfg.get<string[]>('canonicalRoots', ['.agents']),
-		skillsRoots: cfg.get<string[]>('skillsRoots', []),
+		canonicalRoots: stringArraySetting(cfg.get<unknown>('canonicalRoots'), ['.agents']),
+		skillsRoots: stringArraySetting(cfg.get<unknown>('skillsRoots'), []),
 		skillsRootsTrusted: skillsInsp?.workspaceValue === undefined && skillsInsp?.workspaceFolderValue === undefined,
 		canonicalRootsTrusted:
 			canonicalInsp?.workspaceValue === undefined && canonicalInsp?.workspaceFolderValue === undefined,
 		rules,
-		betaSpecs: cfg.get<boolean>('beta.specs', true),
-		betaLoadSimulation: cfg.get<boolean>('beta.loadSimulation', true),
+		betaSpecs: booleanSetting(cfg.get<unknown>('beta.specs'), true),
+		betaLoadSimulation: booleanSetting(cfg.get<unknown>('beta.loadSimulation'), true),
 	};
 }
 

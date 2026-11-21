@@ -89,3 +89,19 @@ test('ロードマトリクス: 未解析の理由をサイズ上限超と断定
 	assert.match(md, /未解析（内容を読み取れませんでした）/);
 	assert.doesNotMatch(md, /サイズ上限/, '未解析の原因をサイズ上限超と断定しない');
 });
+
+test('ロードマトリクス: リポジトリ由来文字列のリンク構文がエスケープされる', () => {
+	const spec = specUnit('/ws', '[悪性](https://example.com)');
+	const md = renderLoadMatrix([], [], [spec], []);
+	assert.ok(md.includes('\\[悪性\\]'), '角括弧がエスケープされる');
+	assert.ok(!md.includes('[悪性](https://example.com)'), 'リンク記法がそのまま残らない');
+	const copilot: CopilotUnit = {
+		...copilotUnit('/ws', 10),
+		mode: 'applyTo',
+		applyTo: '**/*.ts` [x](https://example.com)',
+	};
+	const md2 = renderLoadMatrix([], [], [], [copilot]);
+	assert.ok(md2.includes('\\[x\\]'), 'applyTo の角括弧がエスケープされる');
+	assert.ok(md2.includes('\\`'), 'applyTo のバッククォートがエスケープされる');
+	assert.ok(!md2.includes('[x](https://example.com)'), 'applyTo のリンク記法がそのまま残らない');
+});

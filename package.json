@@ -98,12 +98,14 @@
         "skillmap.rules.descriptionMaxLength": {
           "default": 1024,
           "description": "%config.descriptionMaxLength%",
+          "maximum": 100000,
           "minimum": 0,
           "type": "number"
         },
         "skillmap.rules.maxReferenceDepth": {
           "default": 2,
           "description": "%config.maxReferenceDepth%",
+          "maximum": 100,
           "minimum": 0,
           "type": "number"
         },
@@ -120,24 +122,28 @@
         "skillmap.rules.skillBodyMaxLines": {
           "default": 500,
           "description": "%config.skillBodyMaxLines%",
+          "maximum": 100000,
           "minimum": 0,
           "type": "number"
         },
         "skillmap.rules.skillBodyMaxTokens": {
           "default": 5000,
           "description": "%config.skillBodyMaxTokens%",
+          "maximum": 10000000,
           "minimum": 0,
           "type": "number"
         },
         "skillmap.rules.skillTotalTokenBudget": {
           "default": 0,
           "description": "%config.skillTotalTokenBudget%",
+          "maximum": 100000000,
           "minimum": 0,
           "type": "number"
         },
         "skillmap.rules.steeringAlwaysTokenBudget": {
           "default": 0,
           "description": "%config.steeringAlwaysTokenBudget%",
+          "maximum": 100000000,
           "minimum": 0,
           "type": "number"
         },
@@ -275,5 +281,5 @@
     "vscode:prepublish": "node esbuild.js --production",
     "watch": "node esbuild.js --watch"
   },
-  "version": "1.8.8"
+  "version": "1.8.9"
 }

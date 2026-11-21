@@ -1,5 +1,6 @@
 import { RULES, type SkillWarning } from './rules.js';
 import { L } from './i18n.js';
+import { escapeMarkdownText } from './markdown.js';
 
 /** Tips 全文を Markdown 文字列として組み立てる（表示層から分離したデータ駆動の生成） */
 export function renderTipMarkdown(ruleId: string, warningMessage?: string): string {
@@ -12,7 +13,9 @@ export function renderTipMarkdown(ruleId: string, warningMessage?: string): stri
 		'',
 	];
 	if (warningMessage) {
-		lines.push(`> ⚠ ${warningMessage}`, '');
+		// 警告文にはファイル由来の文字列（ファイル名・パターン等）が含まれうるため、
+		// リンク構文を作る文字をエスケープしてから引用ブロックへ埋め込む
+		lines.push(`> ⚠ ${escapeMarkdownText(warningMessage)}`, '');
 	}
 	lines.push(`## ${L('原則', 'Principle')}`, '', rule.tip.principle, '', `## ${L('直し方', 'How to fix')}`, '', rule.tip.fix, '');
 	if (rule.tip.good || rule.tip.bad) {

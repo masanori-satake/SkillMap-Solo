@@ -6,7 +6,7 @@ import fsDefault from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isRealPathInside, isTentativeMention, listAllFiles, reachableTokens, readFileInfo, rootLabels, scopeRootFor, type FileInfo, type RefEdge, type SkillUnit } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isRealPathInside, isTentativeMention, listAllFiles, listFilesRecursive, MAX_HASH_FILE_BYTES, MAX_HASH_TOTAL_BYTES, reachableTokens, readFileInfo, rootLabels, scopeRootFor, type FileInfo, type RefEdge, type SkillUnit } from '../skills.js';
 import { parseFrontmatter } from '../frontmatter.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
@@ -657,4 +657,51 @@ test('レビュー指摘2/3: isRealPathInside はリンク経由のフォルダ�
 	assert.equal(isRealPathInside(root, path.join(root, 'inner-link', 'file.md')), true);
 	// 解決できないパスは採用しない
 	assert.equal(isRealPathInside(root, path.join(root, 'does-not-exist.md')), false);
+});
+
+test('監査指摘: 走査の総ファイル数上限で列挙が打ち切られる', () => {
+	const root = tmpRoot();
+	for (let i = 0; i < 5; i++) {
+		write(root, `f${i}.md`, '# x\n');
+	}
+	write(root, 'sub/f5.md', '# x\n');
+	const out: string[] = [];
+	listFilesRecursive(root, 0, out, 3);
+	assert.equal(out.length, 3);
+	// 上限なし（既定）では全件列挙される
+	assert.equal(listAllFiles(root).length, 6);
+});
+
+test('監査指摘: ハッシュ上限を超えるファイルは fileHashes から外れるが列挙には残る', () => {
+	const root = tmpRoot();
+	write(root, 'skills/big/SKILL.md', GOOD_SKILL);
+	// 上限超のファイルはスパースファイルで作り、実容量と読み込みを節約する
+	const big = path.join(root, 'skills/big/blob.bin');
+	fs.writeFileSync(big, '');
+	fs.truncateSync(big, MAX_HASH_FILE_BYTES + 1);
+	const unit = buildUnit(path.join(root, 'skills/big'));
+	assert.ok(unit.fileHashes.has('SKILL.md'), '通常ファイルはハッシュ対象');
+	assert.ok(!unit.fileHashes.has('blob.bin'), 'サイズ上限超はハッシュ対象外');
+	assert.ok(unit.orphans.includes(big), '列挙（孤立ファイル）には残る');
+});
+
+test('監査指摘: ハッシュ総量上限で残りのファイルが対象外になる', () => {
+	const root = tmpRoot();
+	write(root, 'skills/many/SKILL.md', GOOD_SKILL);
+	const perFile = MAX_HASH_FILE_BYTES / 2;
+	const count = Math.floor(MAX_HASH_TOTAL_BYTES / perFile) + 2;
+	for (let i = 0; i < count; i++) {
+		const p = path.join(root, `skills/many/blob${i}.bin`);
+		fs.writeFileSync(p, '');
+		fs.truncateSync(p, perFile);
+	}
+	const unit = buildUnit(path.join(root, 'skills/many'));
+	// 全件はハッシュされず、ハッシュ済み総量は上限以内に収まる
+	assert.ok(unit.fileHashes.size < count + 1, '総量上限で打ち切られる');
+	let hashedBytes = 0;
+	for (const rel of unit.fileHashes.keys()) {
+		hashedBytes += fs.statSync(path.join(unit.dir, rel)).size;
+	}
+	assert.ok(hashedBytes <= MAX_HASH_TOTAL_BYTES, 'ハッシュ済み総量が上限以内');
+	assert.ok(hashedBytes > MAX_HASH_TOTAL_BYTES - MAX_HASH_FILE_BYTES, '上限付近までハッシュされる');
 });
