@@ -96,6 +96,25 @@ const MAX_WALK_DEPTH = 10;
  */
 export const MAX_TEXT_FILE_BYTES = 1024 * 1024;
 
+/**
+ * 走査で列挙するファイル総数の上限。深さ上限（MAX_WALK_DEPTH）だけでは、
+ * 浅く広い巨大なディレクトリ（生成物やベンダーツリー等）で列挙が際限なく
+ * 膨らむ。列挙は起動時と保存イベントで同期的に走るため、上限に達したら
+ * 列挙を打ち切る（打ち切られた分は発見・解析の対象にならない）。
+ */
+export const MAX_TOTAL_FILES = 100_000;
+
+/**
+ * ハッシュ対象にする1ファイルのサイズ上限（バイト）。スキル内に大きな
+ * バイナリがあっても、ドリフト検出（R11）のためのハッシュ計算だけで拡張
+ * ホストを長時間ブロックしないため。これを超えるファイルはハッシュを
+ * 求めず R11 の対象から外すが、列挙・参照解析・表示は従来どおり行う。
+ */
+export const MAX_HASH_FILE_BYTES = 16 * 1024 * 1024;
+
+/** 1スキルあたりのハッシュ対象バイト総量の上限。単一ファイルが上限未満でも、大量のファイルで総量が膨らむ場合に打ち切る */
+export const MAX_HASH_TOTAL_BYTES = 256 * 1024 * 1024;
+
 /** 参照抽出の対象にする1行の長さ上限（文字数）。これより長い行は切り詰めて抽出する */
 const MAX_EXTRACT_LINE_LENGTH = 100_000;
 
@@ -160,8 +179,8 @@ function isProbablyText(buf: Buffer): boolean {
 	return true;
 }
 
-export function listFilesRecursive(dir: string, depth: number, out: string[]): void {
-	if (depth > MAX_WALK_DEPTH) {
+export function listFilesRecursive(dir: string, depth: number, out: string[], limit = MAX_TOTAL_FILES): void {
+	if (depth > MAX_WALK_DEPTH || out.length >= limit) {
 		return;
 	}
 	let entries: fs.Dirent[];
@@ -171,10 +190,13 @@ export function listFilesRecursive(dir: string, depth: number, out: string[]): v
 		return;
 	}
 	for (const entry of entries) {
+		if (out.length >= limit) {
+			return;
+		}
 		const full = path.join(dir, entry.name);
 		if (entry.isDirectory()) {
 			if (!SKIP_DIRS.has(entry.name)) {
-				listFilesRecursive(full, depth + 1, out);
+				listFilesRecursive(full, depth + 1, out, limit);
 			}
 		} else if (entry.isFile()) {
 			out.push(full);
@@ -535,11 +557,25 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 		}
 	}
 
-	// ハッシュは内容キャッシュ経由で取得する（未変更ファイルは再読み込みしない）
+	// ハッシュは内容キャッシュ経由で取得する（未変更ファイルは再読み込みしない）。
+	// 単一ファイルサイズと総量に上限を設け、大きなバイナリを大量に含むスキルでも
+	// ハッシュ計算だけで同期処理が長時間ブロックされないようにする。上限を超える
+	// ファイルはハッシュ対象から外すだけで、列挙・参照解析・表示は従来どおり
+	let hashBytes = 0;
 	const fileHashes = new Map<string, string>();
 	for (const abs of diskAbs) {
+		let size: number;
+		try {
+			size = fs.statSync(abs).size;
+		} catch {
+			continue;
+		}
+		if (size > MAX_HASH_FILE_BYTES || hashBytes + size > MAX_HASH_TOTAL_BYTES) {
+			continue;
+		}
 		const hash = fileHash(abs);
 		if (hash !== undefined) {
+			hashBytes += size;
 			fileHashes.set(path.relative(skillDir, abs), hash);
 		}
 	}
