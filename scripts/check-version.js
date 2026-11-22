@@ -108,6 +108,7 @@ function isVsixRelevant(filepath) {
   ];
   const ignoredFiles = new Set([
     '.gitignore',
+    '.markdownlint.json',
     '.pre-commit-config.yaml',
     '.pre-commit-ci.yaml',
     '.vscode-test.mjs',

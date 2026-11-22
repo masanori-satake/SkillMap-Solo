@@ -2,6 +2,11 @@
 
 "SkillMap-Solo" 拡張機能のすべての注目すべき変更はこのファイルに記録されます。
 
+## [1.8.10] - 2026-11-22
+
+### 修正 (Fixed)
+- **開発用設定の整備**: `scripts/check-version.js` の版バンプ判定で `.markdownlint.json` を対象外にした（`.pre-commit-config.yaml` と同じ扱い）。あわせて、pre-commit フックの自動修正で `src/treeProvider.ts` などの末尾改行・空白を整えた（動作に変更なし）
+
 ## [1.8.9] - 2026-11-22
 
 ### セキュリティ (Security)
