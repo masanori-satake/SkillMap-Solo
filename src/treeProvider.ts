@@ -933,11 +933,11 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				} else {
 					md.appendMarkdown(L(`- 常時ロード合計（inclusion: always）: ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`, `- Always-loaded total (inclusion: always): ≈${this.model.alwaysSteeringTokens().toLocaleString()} tok\n`));
 				}
-				md.appendMarkdown(L('- Kiro が inclusion 設定に従って自動で読み込むファイルです。Copilot は読みません\n', '- Files Kiro loads automatically according to their inclusion settings. Copilot does not read them.\n'));
+				md.appendMarkdown(L('- Kiro が inclusion 設定に従って自動で読み込むファイルです。Copilot では利用できません\n', '- Files Kiro loads automatically according to their inclusion settings. Not available in Copilot.\n'));
 			} else if (node.sectionId === 'copilot') {
 				md.appendMarkdown('**Copilot instructions**\n\n');
-				md.appendMarkdown(L('- GitHub Copilot が読み込む指示ファイルです（表示専用。ルール適用はしません）\n', '- Instruction files read by GitHub Copilot (display only; no rules are applied).\n'));
-				md.appendMarkdown(L('- Kiro は読みません\n', '- Kiro does not read them.\n'));
+				md.appendMarkdown(L('- GitHub Copilot で利用できる指示ファイルです（表示専用。ルール適用はしません）\n', '- Instruction files available in GitHub Copilot (display only; no rules are applied).\n'));
+				md.appendMarkdown(L('- Kiro では利用できません\n', '- Not available in Kiro.\n'));
 			} else if (node.sectionId === 'specs') {
 				md.appendMarkdown(L('**Specs（β）**\n\n', '**Specs (Beta)**\n\n'));
 				md.appendMarkdown(L('- .kiro/specs 配下の仕様駆動開発の3点セットです\n', '- Spec-driven development trios under .kiro/specs.\n'));
@@ -987,7 +987,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				md.appendMarkdown(`- fileMatchPattern: ${markdownCodeSpan(u.fileMatchPattern)}\n`);
 			}
 			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
-			md.appendMarkdown(L('- Kiro: inclusion に従って自動ロード ／ Copilot: 読まれない\n', '- Kiro: auto-loaded per inclusion / Copilot: not loaded\n'));
+			md.appendMarkdown(L('- Kiro: 利用可能（inclusion に従って自動ロード）／ Copilot: 利用不可\n', '- Kiro: Available (auto-loaded per inclusion) / Copilot: Unavailable\n'));
 			if (u.canonicalCounterpart) {
 				md.appendMarkdown(`- ${L('正本', 'Canonical')}: ${escapeMarkdownText(u.canonicalCounterpart)}\n`);
 			}
@@ -1010,7 +1010,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			md.appendMarkdown(`**${escapeMarkdownText(u.filePath)}**\n\n`);
 			md.appendMarkdown(L(`- 読み込み: ${u.mode === 'always' ? '常時（Copilot）' : `applyTo: ${escapeMarkdownText(u.applyTo ?? '(未指定)')}`}\n`, `- Loading: ${u.mode === 'always' ? 'always (Copilot)' : `applyTo: ${escapeMarkdownText(u.applyTo ?? '(not set)')}`}\n`));
 			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
-			md.appendMarkdown(L('- Copilot: 読み込む ／ Kiro: 読まれない\n', '- Copilot: loaded / Kiro: not loaded\n'));
+			md.appendMarkdown(L('- Copilot: 利用可能 ／ Kiro: 利用不可\n', '- Copilot: Available / Kiro: Unavailable\n'));
 			return md;
 		}
 		if (node.kind === 'orphanGroup') {
