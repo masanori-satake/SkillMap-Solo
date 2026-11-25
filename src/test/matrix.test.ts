@@ -50,8 +50,8 @@ test('ロードマトリクス: マルチルートでは同名ファイルにフ
 test('ロードマトリクス: 列順は Copilot が Kiro の左', () => {
 	const md = renderLoadMatrix([], [], [], [copilotUnit('/home/u/repoA', 100)]);
 	assert.match(md, /\| ファイル \| Copilot \| Kiro \| 推定トークン \|/);
-	// Copilot 行: Copilot 列に読み込み条件、Kiro 列に「読まれない」
-	assert.match(md, /\| AGENTS\.md \| 常時 \| 読まれない \| ≈100 \|/);
+	// Copilot 行: Copilot 列に読み込み条件、Kiro 列に「利用不可」
+	assert.match(md, /\| AGENTS\.md \| 常時 \| 利用不可 \| ≈100 \|/);
 });
 
 test('ロードマトリクス: 単一ルートではフォルダ名を付けない', () => {
@@ -61,28 +61,44 @@ test('ロードマトリクス: 単一ルートではフォルダ名を付けな
 	assert.doesNotMatch(md, /repoA/);
 });
 
-test('ロードマトリクス: 独立したスキルは配置場所と読まれるツールで表示する', () => {
+test('ロードマトリクス: 独立したスキルは配置場所と利用できるツールで表示する', () => {
 	const kiro = logicalSkill('dup', skillUnit('/ws', '/ws/.kiro/skills/dup'));
 	const mdKiro = renderLoadMatrix([kiro], [], [], []);
-	assert.match(mdKiro, /\| dup \(\.kiro\) \| 読まれない \| スキルとして \|/);
-	assert.doesNotMatch(mdKiro, /正本|直接は読まれない/, '独立したスキルに正本/原本文言を付けない');
+	assert.match(mdKiro, /\| スキル \| Copilot \| Kiro \| 推定トークン \|/);
+	assert.match(mdKiro, /\| dup \(\.kiro\) \| 利用不可 \| 利用可能 \|/);
+	const kiroRow = mdKiro.split('\n').find((l) => l.includes('dup (.kiro)')) ?? '';
+	assert.doesNotMatch(kiroRow, /正本|直接は利用不可/, '独立したスキルの行に正本/原本文言を付けない');
 
 	const github = logicalSkill('dup', skillUnit('/ws', '/ws/.github/skills/dup'));
 	const mdGithub = renderLoadMatrix([github], [], [], []);
-	assert.match(mdGithub, /\| dup \(\.github\) \| スキルとして \| 読まれない \|/);
+	assert.match(mdGithub, /\| dup \(\.github\) \| 利用可能 \| 利用不可 \|/);
 
+	// .agents のスキルは Copilot が読む（GitHub 公式仕様）。Kiro からは利用できない
 	const agents = logicalSkill('dup', skillUnit('/ws', '/ws/.agents/skills/dup'));
 	const mdAgents = renderLoadMatrix([agents], [], [], []);
-	assert.match(mdAgents, /\| dup \(\.agents\) \| 読まれない \| 読まれない \|/);
-	assert.doesNotMatch(mdAgents, /正本|直接は読まれない/);
+	assert.match(mdAgents, /\| dup \(\.agents\) \| 利用可能 \| 利用不可 \|/);
+	const agentsRow = mdAgents.split('\n').find((l) => l.includes('dup (.agents)')) ?? '';
+	assert.doesNotMatch(agentsRow, /正本|直接は利用不可/);
+});
+
+test('ロードマトリクス: スキルとファイルは別の表に分ける', () => {
+	const skill = logicalSkill('dup', skillUnit('/ws', '/ws/.kiro/skills/dup'));
+	const md = renderLoadMatrix([skill], [], [specUnit('/ws', 'alpha')], [copilotUnit('/ws', 100)]);
+	assert.match(md, /## スキル/);
+	assert.match(md, /## ファイル/);
+	// スキルだけのときはファイルの表を出さない
+	const mdSkillOnly = renderLoadMatrix([skill], [], [], []);
+	assert.doesNotMatch(mdSkillOnly, /## ファイル/);
+	assert.doesNotMatch(mdSkillOnly, /\| ファイル \|/);
 });
 
 test('ロードマトリクス: 複製を持つスキルは従来どおり正本行と複製行で表示する', () => {
 	const canonical = skillUnit('/ws', '/ws/.agents/skills/dup');
 	const copy = skillUnit('/ws', '/ws/.kiro/skills/dup');
 	const md = renderLoadMatrix([logicalSkill('dup', canonical, [copy])], [], [], []);
-	assert.match(md, /\| dup（複製: Kiro 用） \| 読まれない \| スキルとして \|/);
-	assert.match(md, /\| dup（正本） \| 直接は読まれない（原本） \| 直接は読まれない（原本） \|/);
+	assert.match(md, /\| dup（複製: Kiro 用） \| 利用不可 \| 利用可能 \|/);
+	// 正本（.agents）は Copilot から直接利用できる。Kiro では複製側が使われる
+	assert.match(md, /\| dup（正本） \| 利用可能 \| 直接は利用不可（原本） \|/);
 });
 
 test('ロードマトリクス: 未解析の Steering は「常時」ではなく未解析と表示する', () => {
