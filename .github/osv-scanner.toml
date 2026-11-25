@@ -1,0 +1,12 @@
+# OSV-Scanner 設定 (OSV-Scanner Configuration)
+#
+# security-scan.yml から --config=./.github/osv-scanner.toml で読み込む。
+# VSIX に同梱されない devDependencies（vsce / mocha / eslint などの開発ツール）の
+# 脆弱性は CI を失敗させない。拡張機能本体に同梱される dependencies は従来どおり検査する。
+# npm audit 側の --omit=dev（security-scan.yml の audit_omit_dev: true）と方針を揃えている。
+
+[[PackageOverrides]]
+ecosystem = "npm"
+group = "dev"
+vulnerability.ignore = true
+reason = "devDependencies は VSIX に同梱されないため、CI の合否判定から除外する"
