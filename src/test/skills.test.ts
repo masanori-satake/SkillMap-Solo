@@ -360,6 +360,33 @@ description: 地の文の言及テスト用2。テストを実行するときに
 	assert.equal(unit.proseMentions.length, 0);
 });
 
+test('地の文の言及: 別のファイル名の一部は言及として拾わない', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/prose3/SKILL.md',
+		`---
+name: prose3
+description: 地の文の言及テスト用3。テストを実行するときに使う。
+---
+
+# Prose3
+
+下書きは draft+guide.md にあります。
+`,
+	);
+	write(root, 'skills/prose3/references/guide.md', '# Guide\n');
+	const unit = buildUnit(path.join(root, 'skills/prose3'));
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	// draft+guide.md は実在しない別ファイルの名前であり、guide.md への言及ではない
+	assert.equal(unit.proseMentions.length, 0, '部分一致を言及にしない');
+	assert.equal(warnings.filter((w) => w.ruleId === 'R13').length, 0, 'R13 は出ない');
+	const r9 = warnings.filter((w) => w.ruleId === 'R9');
+	assert.equal(r9.length, 1, 'guide.md は従来どおり R9 になる');
+	assert.ok(r9[0].file.endsWith('guide.md'));
+});
+
 test('抽出: 同じ行のリンクとコードスパンはリンクとして格上げされる', () => {
 	const root = tmpRoot();
 	const from = path.join(root, 'a.md');

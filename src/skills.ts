@@ -450,6 +450,15 @@ export function extractReferences(fromFile: string, text: string, resCtx?: Resol
 			PROSE_CANDIDATE_RE.lastIndex = 0;
 			let pm: RegExpExecArray | null;
 			while ((pm = PROSE_CANDIDATE_RE.exec(masked)) !== null) {
+				// 候補が別のファイル名の一部（draft+guide.md の guide.md 等）を
+				// 拾わないよう、前後の文字がファイル名を構成しうる文字なら外す。
+				// トークンの文字クラスに含まれる文字は貪欲な一致で候補側に取り
+				// 込まれるため、ここに現れるのはクラス外の連結文字（+、~ 等）が中心
+				const before = pm.index > 0 ? masked[pm.index - 1] : '';
+				const after = masked[pm.index + pm[0].length] ?? '';
+				if (/[A-Za-z0-9_+~@%&=\/-]/.test(before) || /[A-Za-z0-9_+~@%&=\/-]/.test(after)) {
+					continue;
+				}
 				const candidate = pm[0].replace(/\.$/, '');
 				const existsInIndex = resCtx.byBasename.has(path.basename(candidate));
 				if (PATH_LIKE_RE.test(candidate) && (hasFileLikeExtension(candidate) || existsInIndex)) {
