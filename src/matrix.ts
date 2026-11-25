@@ -20,13 +20,14 @@ export function renderLoadMatrix(
 			'Which files are loaded by which tool, and when. The loading model follows each tool\'s public documentation and is provided as a beta feature.',
 		),
 		'',
-		L('| ファイル | Copilot | Kiro | 推定トークン |', '| File | Copilot | Kiro | Est. tokens |'),
-		'|---|---|---|---:|',
 	];
+	const skillRows: string[] = [];
+	const fileRows: string[] = [];
 	// テーブルセル用: 共通エスケープ（リンク構文を壊す文字・バックスラッシュ）に
 	// 加えて、セル区切りの `|` も逃がす
 	const esc = (s: string) => escapeMarkdownText(s).replace(/\|/g, '\\|');
-	const notLoaded = L('読まれない', 'Not loaded');
+	const available = L('利用可能', 'Available');
+	const unavailable = L('利用不可', 'Unavailable');
 	// マルチルートでは同名ファイル（AGENTS.md 等）が並んで判別できないため、
 	// そのカテゴリが複数フォルダにまたがる場合は行にフォルダ名を付ける
 	const labelsFor = (roots: string[]): Map<string, string> | null => {
@@ -47,48 +48,72 @@ export function renderLoadMatrix(
 				: s.inclusion === 'fileMatch'
 					? L(`条件一致時（${esc(s.fileMatchPattern ?? 'パターンなし')}）`, `On match (${esc(s.fileMatchPattern ?? 'no pattern')})`)
 					: L('手動のみ', 'Manual only');
-		lines.push(`| .kiro/steering/${esc(path.basename(s.filePath))}${tagFor(steeringLabels, s.workspaceRoot)} | ${notLoaded} | ${when} | ≈${s.tokens.toLocaleString()} |`);
+		fileRows.push(`| .kiro/steering/${esc(path.basename(s.filePath))}${tagFor(steeringLabels, s.workspaceRoot)} | ${unavailable} | ${when} | ≈${s.tokens.toLocaleString()} |`);
 	}
 	for (const skill of skills) {
 		for (const copy of skill.copies) {
 			const rel = copy.dir.split(path.sep).join('/');
-			const tool = rel.includes('/.kiro/') ? 'Kiro' : rel.includes('/.github/') ? 'Copilot' : null;
+			// Copilot は .github と .agents のスキルを読み、Kiro は .kiro のスキルを読む
+			const tool = rel.includes('/.kiro/') ? 'Kiro' : rel.includes('/.github/') || rel.includes('/.agents/') ? 'Copilot' : null;
 			if (tool) {
-				const asSkill = L('スキルとして', 'As a skill');
-				const kiroCell = tool === 'Kiro' ? asSkill : notLoaded;
-				const copCell = tool === 'Copilot' ? asSkill : notLoaded;
-				lines.push(
+				const kiroCell = tool === 'Kiro' ? available : unavailable;
+				const copCell = tool === 'Copilot' ? available : unavailable;
+				skillRows.push(
 					`| ${esc(path.basename(copy.dir))}${L(`（複製: ${tool} 用）`, ` (replica for ${tool})`)}${tagFor(skillLabels, copy.sourceRoot)} | ${copCell} | ${kiroCell} | ≈${totalOwnedTokens(copy).toLocaleString()} |`,
 				);
 			}
 		}
 		if (skill.copies.length > 0) {
-			lines.push(
-				`| ${esc(skill.name)}${L('（正本）', ' (canonical)')}${tagFor(skillLabels, skill.canonical.sourceRoot)} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
+			// 正本も、その配置場所のツールからは直接利用できる（例: .agents の
+			// 正本は Copilot が読む）。他方のツールでは複製側が使われる
+			const loc = skillLocationOf(skill.canonical.dir);
+			const notDirect = L('直接は利用不可（原本）', 'Not available directly (source)');
+			const copCell = loc === '.github' || loc === '.agents' ? available : notDirect;
+			const kiroCell = loc === '.kiro' ? available : notDirect;
+			skillRows.push(
+				`| ${esc(skill.name)}${L('（正本）', ' (canonical)')}${tagFor(skillLabels, skill.canonical.sourceRoot)} | ${copCell} | ${kiroCell} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
 			);
 		} else {
 			// 複製を持たない独立したスキルは、正本/原本の構造ではない。配置場所と、
-			// その場所のツールにスキルとして読まれるかをそのまま示す（同名スキルが
+			// その場所のツールで利用できるかをそのまま示す（同名スキルが
 			// 複数並んでも場所で見分けられるようにする）
 			const loc = skillLocationOf(skill.canonical.dir);
-			const asSkill = L('スキルとして', 'As a skill');
-			const copCell = loc === '.github' ? asSkill : notLoaded;
-			const kiroCell = loc === '.kiro' ? asSkill : notLoaded;
+			const copCell = loc === '.github' || loc === '.agents' ? available : unavailable;
+			const kiroCell = loc === '.kiro' ? available : unavailable;
 			const locSuffix = loc ? ` (${loc})` : '';
-			lines.push(
+			skillRows.push(
 				`| ${esc(skill.name)}${locSuffix}${tagFor(skillLabels, skill.canonical.sourceRoot)} | ${copCell} | ${kiroCell} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
 			);
 		}
 	}
 	for (const c of copilot) {
 		const when = c.mode === 'always' ? L('常時', 'Always') : L(`条件一致時（applyTo: ${esc(c.applyTo ?? '未指定')}）`, `On match (applyTo: ${esc(c.applyTo ?? 'not set')})`);
-		lines.push(`| ${esc(c.name)}${tagFor(copilotLabels, c.workspaceRoot)} | ${when} | ${notLoaded} | ≈${c.tokens.toLocaleString()} |`);
+		fileRows.push(`| ${esc(c.name)}${tagFor(copilotLabels, c.workspaceRoot)} | ${when} | ${unavailable} | ≈${c.tokens.toLocaleString()} |`);
 	}
 	for (const spec of specs) {
-		lines.push(`| Spec: ${esc(spec.name)}${tagFor(specLabels, spec.workspaceRoot)} | ${notLoaded} | ${L('Spec 作業時', 'During spec work')} | ≈${spec.totalTokens.toLocaleString()} |`);
+		fileRows.push(`| Spec: ${esc(spec.name)}${tagFor(specLabels, spec.workspaceRoot)} | ${unavailable} | ${L('Spec 作業時', 'During spec work')} | ≈${spec.totalTokens.toLocaleString()} |`);
+	}
+	if (skillRows.length > 0) {
+		lines.push(
+			L('## スキル', '## Skills'),
+			'',
+			L('| スキル | Copilot | Kiro | 推定トークン |', '| Skill | Copilot | Kiro | Est. tokens |'),
+			'|---|---|---|---:|',
+			...skillRows,
+			'',
+		);
+	}
+	if (fileRows.length > 0) {
+		lines.push(
+			L('## ファイル', '## Files'),
+			'',
+			L('| ファイル | Copilot | Kiro | 推定トークン |', '| File | Copilot | Kiro | Est. tokens |'),
+			'|---|---|---|---:|',
+			...fileRows,
+			'',
+		);
 	}
 	lines.push(
-		'',
 		L('## 読み方', '## How to read this'),
 		'',
 		L(
@@ -104,8 +129,12 @@ export function renderLoadMatrix(
 			'- Different coverage between Kiro and Copilot is normal. This table exists so you can check the difference is intentional.',
 		),
 		L(
-			'- 名前の後に配置場所（.kiro など）が付いた行は、複製を持たない独立したスキルです。.github と .kiro のスキルはその場所のツールにスキルとして読まれます。.agents のみのスキルは、どちらのツールからも直接は読まれません',
-			'- A row whose name is followed by a location (such as .kiro) is a standalone skill with no replicas. Skills in .github and .kiro are loaded as skills by the tool of that location; a skill that exists only in .agents is not loaded directly by either tool.',
+			'- 名前の後に配置場所（.kiro など）が付いた行は、複製を持たない独立したスキルです。.github と .agents のスキルは Copilot で、.kiro のスキルは Kiro で利用できます',
+			'- A row whose name is followed by a location (such as .kiro) is a standalone skill with no replicas. Skills in .github and .agents are available in Copilot; skills in .kiro are available in Kiro.',
+		),
+		L(
+			'- 「（正本）」と付いた行は、.agents / .github / .kiro の3か所に揃ったスキルの正本です。正本も、その配置場所のツールからは直接利用できます',
+			'- A row marked "(canonical)" is the source of a skill present in all three locations (.agents / .github / .kiro). The source itself is also available directly to the tool of its location.',
 		),
 		'',
 	);
