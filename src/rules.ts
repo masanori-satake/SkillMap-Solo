@@ -67,7 +67,7 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 	},
 	R3: {
 		id: 'R3',
-		title: { ja: 'description に利用シーンがあるか', en: 'Description has a use-case cue' },
+		title: { ja: 'description の「いつ使うか」の目印語句', en: 'Marker words for when to use this skill' },
 		tip: {
 			principle: {
 				ja: '「何をするか」だけでは、AI は使う場面を判断できません。',
@@ -509,7 +509,7 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 	if (description) {		const lower = description.toLowerCase();
 		const hasWhen = WHEN_KEYWORDS.some((k) => lower.includes(k));
 		if (!hasWhen) {
-			push({ ruleId: 'R3', severity: 'info', message: L('description に「いつ使うか」の手がかりが見当たりません', 'The description has no cue about when to use this skill'), file: unit.skillMdPath, line: fm.descriptionLine });
+			push({ ruleId: 'R3', severity: 'info', message: L('description に「いつ使うか」の目印となる語句（when、〜とき、〜場合など）が含まれていません', 'The description contains none of the marker words for when to use this skill (e.g. "when", "whenever")'), file: unit.skillMdPath, line: fm.descriptionLine });
 		}
 	}
 
