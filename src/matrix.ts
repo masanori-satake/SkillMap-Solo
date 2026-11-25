@@ -104,8 +104,8 @@ export function renderLoadMatrix(
 			'- Different coverage between Kiro and Copilot is normal. This table exists so you can check the difference is intentional.',
 		),
 		L(
-			'- 名前の後に配置場所（.kiro など）が付いた行は、複製を持たない独立したスキルです。その場所のツールにスキルとして読まれます',
-			'- A row whose name is followed by a location (such as .kiro) is a standalone skill with no replicas. It is loaded as a skill by the tool of that location.',
+			'- 名前の後に配置場所（.kiro など）が付いた行は、複製を持たない独立したスキルです。.github と .kiro のスキルはその場所のツールにスキルとして読まれます。.agents のみのスキルは、どちらのツールからも直接は読まれません',
+			'- A row whose name is followed by a location (such as .kiro) is a standalone skill with no replicas. Skills in .github and .kiro are loaded as skills by the tool of that location; a skill that exists only in .agents is not loaded directly by either tool.',
 		),
 		'',
 	);
