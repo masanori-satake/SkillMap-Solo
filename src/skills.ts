@@ -777,6 +777,19 @@ export function skillLocationOf(dir: string): SkillLocation | null {
 	return null;
 }
 
+/**
+ * 同名スキルが複数あるとき、配置場所で見分けるためのタグ（例: ' · .kiro'）。
+ * 同名が1つだけの場合と、配置場所が判定できない場合は空文字を返す
+ * （フォルダ名タグ側の見分けに委ねる）。
+ */
+export function sameNameLocationTag(skills: LogicalSkill[], target: LogicalSkill): string {
+	if (skills.filter((s) => s.name === target.name).length <= 1) {
+		return '';
+	}
+	const loc = skillLocationOf(target.canonical.dir);
+	return loc ? ` · ${loc}` : '';
+}
+
 export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): LogicalSkill[] {
 	const groups = new Map<string, SkillUnit[]>();
 	for (const unit of units) {
