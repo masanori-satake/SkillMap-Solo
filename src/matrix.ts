@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
-import { rootLabels, type LogicalSkill } from './skills.js';
+import { rootLabels, skillLocationOf, type LogicalSkill } from './skills.js';
 import { totalOwnedTokens } from './rules.js';
 import { L } from './i18n.js';
 import { escapeMarkdownText } from './markdown.js';
@@ -62,9 +62,23 @@ export function renderLoadMatrix(
 				);
 			}
 		}
-		lines.push(
-			`| ${esc(skill.name)}${L('（正本）', ' (canonical)')}${tagFor(skillLabels, skill.canonical.sourceRoot)} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
-		);
+		if (skill.copies.length > 0) {
+			lines.push(
+				`| ${esc(skill.name)}${L('（正本）', ' (canonical)')}${tagFor(skillLabels, skill.canonical.sourceRoot)} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ${L('直接は読まれない（原本）', 'Not loaded directly (source)')} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
+			);
+		} else {
+			// 複製を持たない独立したスキルは、正本/原本の構造ではない。配置場所と、
+			// その場所のツールにスキルとして読まれるかをそのまま示す（同名スキルが
+			// 複数並んでも場所で見分けられるようにする）
+			const loc = skillLocationOf(skill.canonical.dir);
+			const asSkill = L('スキルとして', 'As a skill');
+			const copCell = loc === '.github' ? asSkill : notLoaded;
+			const kiroCell = loc === '.kiro' ? asSkill : notLoaded;
+			const locSuffix = loc ? ` (${loc})` : '';
+			lines.push(
+				`| ${esc(skill.name)}${locSuffix}${tagFor(skillLabels, skill.canonical.sourceRoot)} | ${copCell} | ${kiroCell} | ≈${totalOwnedTokens(skill.canonical).toLocaleString()} |`,
+			);
+		}
 	}
 	for (const c of copilot) {
 		const when = c.mode === 'always' ? L('常時', 'Always') : L(`条件一致時（applyTo: ${esc(c.applyTo ?? '未指定')}）`, `On match (applyTo: ${esc(c.applyTo ?? 'not set')})`);
@@ -88,6 +102,10 @@ export function renderLoadMatrix(
 		L(
 			'- Kiro と Copilot で読み込み範囲が違うこと自体は正常です。意図せず片方だけに寄っていないかを確認するのがこの表の目的です',
 			'- Different coverage between Kiro and Copilot is normal. This table exists so you can check the difference is intentional.',
+		),
+		L(
+			'- 名前の後に配置場所（.kiro など）が付いた行は、複製を持たない独立したスキルです。.github と .kiro のスキルはその場所のツールにスキルとして読まれます。.agents のみのスキルは、どちらのツールからも直接は読まれません',
+			'- A row whose name is followed by a location (such as .kiro) is a standalone skill with no replicas. Skills in .github and .kiro are loaded as skills by the tool of that location; a skill that exists only in .agents is not loaded directly by either tool.',
 		),
 		'',
 	);

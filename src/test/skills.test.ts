@@ -6,7 +6,7 @@ import fsDefault from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isRealPathInside, isTentativeMention, listAllFiles, listFilesRecursive, MAX_HASH_FILE_BYTES, MAX_HASH_TOTAL_BYTES, reachableTokens, readFileInfo, rootLabels, scopeRootFor, type FileInfo, type RefEdge, type SkillUnit } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isRealPathInside, isTentativeMention, listAllFiles, listFilesRecursive, MAX_HASH_FILE_BYTES, MAX_HASH_TOTAL_BYTES, reachableTokens, readFileInfo, rootLabels, sameNameLocationTag, scopeRootFor, skillLocationOf, type FileInfo, type RefEdge, type SkillUnit } from '../skills.js';
 import { parseFrontmatter } from '../frontmatter.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
@@ -385,6 +385,22 @@ description: 地の文の言及テスト用3。テストを実行するときに
 	const r9 = warnings.filter((w) => w.ruleId === 'R9');
 	assert.equal(r9.length, 1, 'guide.md は従来どおり R9 になる');
 	assert.ok(r9[0].file.endsWith('guide.md'));
+});
+
+test('同名スキルの場所タグ: 複数場所にある同名スキルは配置場所で見分けられる', () => {
+	const root = tmpRoot();
+	const mk = (loc: string) => {
+		write(root, `${loc}/skills/dup/SKILL.md`, '---\nname: dup\ndescription: 同名テスト用。テストを実行するときに使う。\n---\n\n# Dup\n');
+		return buildUnit(path.join(root, loc, 'skills/dup'));
+	};
+	const skills = groupSkills([mk('.agents'), mk('.kiro')], ['.agents']);
+	assert.equal(skills.length, 2, '3か所そろわないため独立したスキルとして並ぶ');
+	const byLoc = new Map(skills.map((s) => [skillLocationOf(s.canonical.dir), sameNameLocationTag(skills, s)]));
+	assert.equal(byLoc.get('.agents'), ' · .agents');
+	assert.equal(byLoc.get('.kiro'), ' · .kiro');
+	// 同名が1つだけならタグは付かない
+	const single = groupSkills([mk('.agents')], ['.agents']);
+	assert.equal(sameNameLocationTag(single, single[0]), '');
 });
 
 test('抽出: 同じ行のリンクとコードスパンはリンクとして格上げされる', () => {

@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { CopilotUnit, SpecUnit } from '../contexts.js';
 import { renderLoadMatrix } from '../matrix.js';
+import type { LogicalSkill, SkillUnit } from '../skills.js';
+
+function skillUnit(root: string, dir: string): SkillUnit {
+	return { dir, sourceRoot: root, files: new Map(), reachableOwned: new Set() } as unknown as SkillUnit;
+}
+
+function logicalSkill(name: string, canonical: SkillUnit, copies: SkillUnit[] = []): LogicalSkill {
+	return { key: name, name, canonical, copies, canonicalExplicit: false };
+}
 
 function copilotUnit(root: string, tokens: number): CopilotUnit {
 	return {
@@ -50,6 +59,30 @@ test('ロードマトリクス: 単一ルートではフォルダ名を付けな
 	assert.match(md, /\| AGENTS\.md \|/);
 	assert.match(md, /\| Spec: alpha \|/);
 	assert.doesNotMatch(md, /repoA/);
+});
+
+test('ロードマトリクス: 独立したスキルは配置場所と読まれるツールで表示する', () => {
+	const kiro = logicalSkill('dup', skillUnit('/ws', '/ws/.kiro/skills/dup'));
+	const mdKiro = renderLoadMatrix([kiro], [], [], []);
+	assert.match(mdKiro, /\| dup \(\.kiro\) \| 読まれない \| スキルとして \|/);
+	assert.doesNotMatch(mdKiro, /正本|直接は読まれない/, '独立したスキルに正本/原本文言を付けない');
+
+	const github = logicalSkill('dup', skillUnit('/ws', '/ws/.github/skills/dup'));
+	const mdGithub = renderLoadMatrix([github], [], [], []);
+	assert.match(mdGithub, /\| dup \(\.github\) \| スキルとして \| 読まれない \|/);
+
+	const agents = logicalSkill('dup', skillUnit('/ws', '/ws/.agents/skills/dup'));
+	const mdAgents = renderLoadMatrix([agents], [], [], []);
+	assert.match(mdAgents, /\| dup \(\.agents\) \| 読まれない \| 読まれない \|/);
+	assert.doesNotMatch(mdAgents, /正本|直接は読まれない/);
+});
+
+test('ロードマトリクス: 複製を持つスキルは従来どおり正本行と複製行で表示する', () => {
+	const canonical = skillUnit('/ws', '/ws/.agents/skills/dup');
+	const copy = skillUnit('/ws', '/ws/.kiro/skills/dup');
+	const md = renderLoadMatrix([logicalSkill('dup', canonical, [copy])], [], [], []);
+	assert.match(md, /\| dup（複製: Kiro 用） \| 読まれない \| スキルとして \|/);
+	assert.match(md, /\| dup（正本） \| 直接は読まれない（原本） \| 直接は読まれない（原本） \|/);
 });
 
 test('ロードマトリクス: 未解析の Steering は「常時」ではなく未解析と表示する', () => {

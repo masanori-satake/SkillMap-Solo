@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { isTentativeMention, layerLabel, reachableTokens, rootLabels, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
+import { isTentativeMention, layerLabel, reachableTokens, rootLabels, sameNameLocationTag, type FileGraph, type LogicalSkill, type SkillUnit } from './skills.js';
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
 import { RULES, totalOwnedTokens, type SkillWarning } from './rules.js';
 import { renderTipSummary, tipCommandUri } from './tips.js';
@@ -734,7 +734,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		// マルチルートで同名が複数あるときだけ、所属フォルダの表示名を付けて見分けられるようにする
 		const folderTag = (name: string, root: string, items: Array<{ name: string; root: string }>): string => {
 			const same = items.filter((x) => x.name === name);
-			if (!root || same.length <= 1) {
+			// 同名が複数でも全て同じルート内なら、フォルダ名は見分けにならない
+			// （スキルの配置場所タグ側で見分ける）
+			if (!root || same.length <= 1 || new Set(same.map((x) => x.root)).size <= 1) {
 				return '';
 			}
 			const labels = rootLabels(same.map((x) => x.root));
@@ -766,7 +768,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			case 'skill': {
 				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
 				const tag = node.skill ? folderTag(node.skill.name, node.skill.canonical.sourceRoot, this.model.skills.map((s) => ({ name: s.name, root: s.canonical.sourceRoot }))) : '';
-				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(this.badgeOf(node))}${tag}`;
+				const locTag = node.skill ? sameNameLocationTag(this.model.skills, node.skill) : '';
+				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(this.badgeOf(node))}${locTag}${tag}`;
 			}
 			case 'copy':
 				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(badgeCount(node.warnings)) : L('正本と一致', 'Matches canonical');
