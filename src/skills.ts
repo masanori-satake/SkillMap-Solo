@@ -11,8 +11,8 @@ export interface RefEdge {
 	line: number;
 	/** 参照が現れた全ての行（0始まり）。同一ファイル内の重複は1エッジに集約する */
 	lines: number[];
-	/** 抽出元: リンク記法かコードスパンか（参照意図の明示度の判定に使う） */
-	via: 'link' | 'code';
+	/** 抽出元: リンク記法かコードスパンか地の文か（参照意図の明示度の判定に使う） */
+	via: 'link' | 'code' | 'prose';
 	/** 解決された絶対パス。ファイルが存在しない場合はその候補パスを返す */
 	target: string;
 	/** 解決先が存在するか */
@@ -65,8 +65,10 @@ export interface SkillUnit {
 	reachableOwned: Set<string>;
 	/** 到達可能なスキル外ファイル */
 	reachableBoundary: Set<string>;
-	/** どこからも参照されていないスキル内ファイル */
+	/** 明示的には参照されていないスキル内ファイル */
 	orphans: string[];
+	/** 地の文でファイル名が言及されているが、明示的な参照では辿れないファイルへの言及（言及元・行つき） */
+	proseMentions: Array<{ target: string; from: string; line: number }>;
 	/** スキル内の全ファイル（相対パス→ハッシュ）。ドリフト比較用 */
 	fileHashes: Map<string, string>;
 	/** L1（name + description）の推定トークン */
@@ -307,11 +309,17 @@ function existsOnDisk(p: string): boolean {
 	}
 }
 
+/** 参照記法の明示度（大きいほど明示的）。同一対象への重複エッジの格上げ判定に使う */
+const VIA_RANK: Record<RefEdge['via'], number> = { prose: 0, code: 1, link: 2 };
+
+/** 地の文から拾うファイル名・パス候補（ASCII トークン。日本語文中でも境界が取れる） */
+const PROSE_CANDIDATE_RE = /[A-Za-z0-9_\-.]+(?:\/[A-Za-z0-9_\-.]+)*/g;
+
 export function extractReferences(fromFile: string, text: string, resCtx?: ResolutionContext): RefEdge[] {
 	const edges: RefEdge[] = [];
 	const byTarget = new Map<string, RefEdge>();
 	const fromDir = path.dirname(fromFile);
-	const push = (raw: string, line: number, via: 'link' | 'code') => {
+	const push = (raw: string, line: number, via: RefEdge['via']) => {
 		const cleaned = raw.replace(/^<|>$/g, '').split('#')[0].trim();
 		if (!cleaned || cleaned.includes('://') || cleaned.startsWith('mailto:') || cleaned.startsWith('/')) {
 			return;
@@ -344,9 +352,9 @@ export function extractReferences(fromFile: string, text: string, resCtx?: Resol
 			if (!existing.lines.includes(line)) {
 				existing.lines.push(line);
 			}
-			// リンク記法で書かれた箇所が1つでもあれば、参照の意図は明示的として格上げする
-			if (via === 'link') {
-				existing.via = 'link';
+			// 明示度の高い記法で書かれた箇所が1つでもあれば格上げする（link > code > prose）
+			if (VIA_RANK[via] > VIA_RANK[existing.via]) {
+				existing.via = via;
 			}
 			// パス付きで書かれた箇所が1つでもあれば、そちらを代表表記にして
 			// 「ファイル名のみの言及」（R13）ではなく未解決の参照（R7）として扱う
@@ -368,6 +376,51 @@ export function extractReferences(fromFile: string, text: string, resCtx?: Resol
 		byTarget.set(target, edge);
 		edges.push(edge);
 	};
+	// 地の文の言及は、実在しスキル索引にもあるファイルへ解決できた場合だけ記録する。
+	// 実在しない名前（作成予定・例示・別プロジェクトのファイル等）を「参照切れ」に
+	// しないため、通常の push と違い、解決できない候補は静かに捨てる。
+	const pushProse = (raw: string, line: number) => {
+		if (!resCtx) {
+			return;
+		}
+		const cleaned = raw.replace(/^<|>$/g, '').split('#')[0].trim().replace(/\.$/, '');
+		if (!cleaned || cleaned.includes('://') || cleaned.startsWith('mailto:') || cleaned.startsWith('/')) {
+			return;
+		}
+		let target = path.resolve(fromDir, cleaned);
+		if (!existsOnDisk(target)) {
+			if (cleaned.includes('/')) {
+				for (const base of resCtx.bases) {
+					const alt = path.resolve(base, cleaned);
+					if (alt !== target && existsOnDisk(alt)) {
+						target = alt;
+						break;
+					}
+				}
+			} else {
+				const matches = [...new Set(resCtx.byBasename.get(path.basename(cleaned)) ?? [])];
+				if (matches.length === 1 && matches[0] !== fromFile) {
+					target = matches[0];
+				}
+			}
+		}
+		if (target === fromFile) {
+			return;
+		}
+		// 索引内にある実在ファイルだけを言及として認める
+		const indexed = resCtx.byBasename.get(path.basename(target))?.includes(target) ?? false;
+		if (!indexed) {
+			return;
+		}
+		try {
+			if (fs.statSync(target).isDirectory()) {
+				return;
+			}
+		} catch {
+			return;
+		}
+		push(cleaned, line, 'prose');
+	};
 	const lines = text.split(/\r?\n/);
 	for (let i = 0; i < lines.length; i++) {
 		// 極端に長い行（生成ドキュメントや1行 JSON 等）は切り詰めてから抽出する。
@@ -387,6 +440,30 @@ export function extractReferences(fromFile: string, text: string, resCtx?: Resol
 			const existsInIndex = resCtx?.byBasename.has(path.basename(candidate)) ?? false;
 			if (PATH_LIKE_RE.test(candidate) && (hasFileLikeExtension(candidate) || existsInIndex)) {
 				push(candidate, i, 'code');
+			}
+		}
+		// 地の文の言及: リンク記法とコードスパンを除いた残りから拾う。
+		// エージェントは地の文も読んでファイルを辿ることがあるため、明示的な
+		// 参照が無くても「言及あり」として区別できるようにする（到達扱いはしない）
+		if (resCtx) {
+			const masked = lineText.replace(LINK_RE, ' ').replace(CODE_SPAN_RE, ' ');
+			PROSE_CANDIDATE_RE.lastIndex = 0;
+			let pm: RegExpExecArray | null;
+			while ((pm = PROSE_CANDIDATE_RE.exec(masked)) !== null) {
+				// 候補が別のファイル名の一部（draft+guide.md の guide.md 等）を
+				// 拾わないよう、前後の文字がファイル名を構成しうる文字なら外す。
+				// トークンの文字クラスに含まれる文字は貪欲な一致で候補側に取り
+				// 込まれるため、ここに現れるのはクラス外の連結文字（+、~ 等）が中心
+				const before = pm.index > 0 ? masked[pm.index - 1] : '';
+				const after = masked[pm.index + pm[0].length] ?? '';
+				if (/[A-Za-z0-9_+~@%&=\/-]/.test(before) || /[A-Za-z0-9_+~@%&=\/-]/.test(after)) {
+					continue;
+				}
+				const candidate = pm[0].replace(/\.$/, '');
+				const existsInIndex = resCtx.byBasename.has(path.basename(candidate));
+				if (PATH_LIKE_RE.test(candidate) && (hasFileLikeExtension(candidate) || existsInIndex)) {
+					pushProse(candidate, i);
+				}
 			}
 		}
 	}
@@ -514,6 +591,7 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 	const depthOwned = new Map<string, number>();
 	const reachableOwned = new Set<string>();
 	const reachableBoundary = new Set<string>();
+	const proseMentions: Array<{ target: string; from: string; line: number }> = [];
 
 	// BFS で到達可能なファイルを辿る
 	const queue: Array<{ p: string; depth: number; ownedDepth: number }> = [
@@ -533,6 +611,14 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 			reachableOwned.add(current.p);
 		}
 		for (const edge of info.refs) {
+			if (edge.via === 'prose') {
+				// 地の文の言及は到達扱いにしない（明示的な参照ではない）が、
+				// 孤立とは区別できるよう、言及として記録する
+				if (edge.exists && !edge.isDirectory) {
+					proseMentions.push({ target: edge.target, from: current.p, line: edge.line });
+				}
+				continue;
+			}
 			if (edge.isDirectory) {
 				if (!files.has(edge.target)) {
 					files.set(edge.target, readFileInfo(edge.target, skillDir, resCtx));
@@ -613,6 +699,7 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 		reachableOwned,
 		reachableBoundary,
 		orphans,
+		proseMentions: proseMentions.filter((m) => !reachableOwned.has(m.target)),
 		fileHashes,
 		l1Tokens,
 		steeringAlwaysTokens,

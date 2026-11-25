@@ -144,8 +144,8 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 				en: 'A bare file name in the text is not necessarily meant as a reference — it may just describe structure, or name a file yet to be created.',
 			},
 			fix: {
-				ja: '参照を意図している場合には、確認が必要です。ファイルを作成するか、表記（タイプミス等）を見直してください。説明や予定の名前であれば、そのままで問題ありません。',
-				en: 'If a reference was intended, it needs a check — create the file or review the spelling. If it is a description or a planned name, no action is needed.',
+				ja: '参照を意図している場合には、確認が必要です。ファイルが無い場合は作成するか、表記（タイプミス等）を見直してください。ファイルが有る場合は、明示的なリンクにすると確実に辿れます。説明や予定の名前であれば、そのままで問題ありません。',
+				en: 'If a reference was intended, it needs a check — if the file is missing, create it or review the spelling; if it exists, an explicit link makes it reliably reachable. If it is a description or a planned name, no action is needed.',
 			},
 		},
 	},
@@ -168,8 +168,8 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 		title: { ja: '未参照ファイル（孤立）', en: 'Unreferenced file (orphan)' },
 		tip: {
 			principle: {
-				ja: 'どこからも参照されていないファイルは、AI からも見えない「死蔵」です。',
-				en: 'A file referenced from nowhere is invisible to the AI as well — dead storage.',
+				ja: '明示的にはどこからも参照されていないファイルは、AI からも見つけにくく、死蔵になりがちです。',
+				en: 'A file with no explicit references is easy for the AI to miss as well, and tends to become dead storage.',
 			},
 			fix: {
 				ja: 'SKILL.md か references から参照を張るか、不要なら削除してください。',
@@ -555,9 +555,18 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 	}
 
 	// R9: 孤立ファイル
+	// 地の文でファイル名が言及されているファイルは、エージェントが文章の解釈で
+	// 辿る可能性があるため孤立とはせず、R13（要確認の言及）として別に知らせる
 	if (settings.orphanFiles !== 'off') {
+		const mentioned = new Set(unit.proseMentions.map((m) => m.target));
 		for (const orphan of unit.orphans) {
-			push({ ruleId: 'R9', severity: settings.orphanFiles, message: L('どこからも参照されていません', 'Not referenced from anywhere'), file: orphan });
+			if (mentioned.has(orphan)) {
+				continue;
+			}
+			push({ ruleId: 'R9', severity: settings.orphanFiles, message: L('明示的には参照されていません', 'Not explicitly referenced from anywhere'), file: orphan });
+		}
+		for (const mention of unit.proseMentions) {
+			push({ ruleId: 'R13', severity: 'info', message: L(`地の文で言及されていますが、明示的な参照ではありません: ${path.basename(mention.target)}`, `Mentioned in prose, but not explicitly referenced: ${path.basename(mention.target)}`), file: mention.from, line: mention.line, target: mention.target });
 		}
 	}
 

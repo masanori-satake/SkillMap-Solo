@@ -298,6 +298,95 @@ description: 言及の段階化テスト用。テストを実行するときに�
 	assert.ok(!skillInfo?.refs.some((e) => e.raw.includes('targets')), '式は候補にしない');
 });
 
+test('地の文のファイル名言及: 孤立（R9）ではなく R13 の要確認になり、到達扱いにもならない', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/prose/SKILL.md',
+		`---
+name: prose
+description: 地の文の言及テスト用。テストを実行するときに使う。
+---
+
+# Prose
+
+詳細は references/guide.md を見てください。
+使い方は handbook.md に書いてあります。
+`,
+	);
+	write(root, 'skills/prose/references/guide.md', '# Guide\n');
+	write(root, 'skills/prose/references/handbook.md', '# Handbook\n');
+	write(root, 'skills/prose/references/unused.md', '# Unused\n');
+	const unit = buildUnit(path.join(root, 'skills/prose'));
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	const byRule = (id: string) => warnings.filter((w) => w.ruleId === id);
+	// 地の文で言及された2件は R13（要確認）になり、R9 にはならない
+	assert.equal(byRule('R13').length, 2, 'guide.md と handbook.md が要確認の言及');
+	assert.ok(byRule('R13').every((w) => w.severity === 'info'), 'R13 は info');
+	assert.ok(byRule('R13').every((w) => w.file === unit.skillMdPath), '言及元の SKILL.md に付く');
+	// 言及の無い unused.md だけが従来どおり R9
+	assert.equal(byRule('R9').length, 1, 'R9 は unused.md のみ');
+	assert.ok(byRule('R9')[0].file.endsWith('unused.md'));
+	// 言及は到達扱いにしない（グラフには入らない）が、記録は残る
+	assert.equal(unit.proseMentions.length, 2);
+	assert.ok(!unit.reachableOwned.has(path.join(root, 'skills/prose/references/guide.md')));
+	// ツリー表示の受け皿として、孤立リスト自体には残る
+	assert.equal(unit.orphans.length, 3);
+});
+
+test('地の文の言及: 実在しないファイル名・明示リンク済みのファイルでは何も出ない', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/prose2/SKILL.md',
+		`---
+name: prose2
+description: 地の文の言及テスト用2。テストを実行するときに使う。
+---
+
+# Prose2
+
+将来作る maybe.md の話と、[明示リンク](references/linked.md) がある linked.md の話。
+バージョン 1.8.11 と Node.js の話はファイルではない。
+`,
+	);
+	write(root, 'skills/prose2/references/linked.md', '# Linked\n');
+	const unit = buildUnit(path.join(root, 'skills/prose2'));
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	assert.equal(warnings.filter((w) => w.ruleId === 'R13').length, 0, '実在しない名前と到達済みファイルは要確認にしない');
+	assert.equal(warnings.filter((w) => w.ruleId === 'R9').length, 0);
+	assert.equal(unit.proseMentions.length, 0);
+});
+
+test('地の文の言及: 別のファイル名の一部は言及として拾わない', () => {
+	const root = tmpRoot();
+	write(
+		root,
+		'skills/prose3/SKILL.md',
+		`---
+name: prose3
+description: 地の文の言及テスト用3。テストを実行するときに使う。
+---
+
+# Prose3
+
+下書きは draft+guide.md にあります。
+`,
+	);
+	write(root, 'skills/prose3/references/guide.md', '# Guide\n');
+	const unit = buildUnit(path.join(root, 'skills/prose3'));
+	const skill = groupSkills([unit], ['.agents'])[0];
+	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+	// draft+guide.md は実在しない別ファイルの名前であり、guide.md への言及ではない
+	assert.equal(unit.proseMentions.length, 0, '部分一致を言及にしない');
+	assert.equal(warnings.filter((w) => w.ruleId === 'R13').length, 0, 'R13 は出ない');
+	const r9 = warnings.filter((w) => w.ruleId === 'R9');
+	assert.equal(r9.length, 1, 'guide.md は従来どおり R9 になる');
+	assert.ok(r9[0].file.endsWith('guide.md'));
+});
+
 test('抽出: 同じ行のリンクとコードスパンはリンクとして格上げされる', () => {
 	const root = tmpRoot();
 	const from = path.join(root, 'a.md');
@@ -536,6 +625,7 @@ test('監査指摘4: 参照チェーンが数万段でも findCycles がスタ�
 		reachableOwned,
 		reachableBoundary: new Set(),
 		orphans: [],
+		proseMentions: [],
 		fileHashes: new Map(),
 		l1Tokens: 1,
 		steeringAlwaysTokens: 0,

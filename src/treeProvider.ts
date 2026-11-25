@@ -1011,7 +1011,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			return md;
 		}
 		if (node.kind === 'orphanGroup') {
-			md.appendMarkdown(L('スキル内に存在しますが、どこからも参照されていないファイルです。\n', 'Files that exist inside the skill but are not referenced from anywhere.\n'));
+			md.appendMarkdown(L('スキル内に存在しますが、明示的には参照されていないファイルです。\n', 'Files that exist inside the skill but are not explicitly referenced.\n'));
 			return md;
 		}
 		md.appendMarkdown(`**${escapeMarkdownText(node.filePath ?? '')}**\n\n`);
