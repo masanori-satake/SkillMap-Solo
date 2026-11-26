@@ -6,7 +6,7 @@ import fsDefault from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import test from 'node:test';
-import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isRealPathInside, isTentativeMention, listAllFiles, listFilesRecursive, MAX_HASH_FILE_BYTES, MAX_HASH_TOTAL_BYTES, reachableTokens, readFileInfo, rootLabels, sameNameLocationTag, scopeRootFor, skillLocationOf, type FileInfo, type RefEdge, type SkillUnit } from '../skills.js';
+import { buildResolutionContext, buildUnit, extractReferences, fileHash, findSkillDirs, groupSkills, isRealPathInside, isTentativeMention, listAllFiles, listFilesRecursive, reachableTokens, readFileInfo, rootLabels, sameNameLocationTag, scopeRootFor, skillLocationOf, type FileInfo, type RefEdge, type SkillUnit } from '../skills.js';
 import { parseFrontmatter } from '../frontmatter.js';
 import { discoverSteering, listWorkspaceRelPaths } from '../contexts.js';
 import { DEFAULT_RULE_SETTINGS, evaluateSkill, evaluateSteering } from '../rules.js';
@@ -31,13 +31,14 @@ description: デモ用スキル。テストを実行するときに使う。
 詳細は [guide](references/guide.md) を参照。
 `;
 
-test('発見・グルーピング・スキル外・孤立が機能する', () => {
+test('発見・配置場所ごとの独立・スキル外・孤立が機能する', () => {
 	const root = tmpRoot();
 	write(root, '.agents/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.agents/skills/demo/references/guide.md', '# Guide\n\n方針は [base](../../../../.kiro/steering/base.md) に従う。\n');
 	write(root, '.agents/skills/demo/references/unused.md', '# 未使用\n');
 	write(root, '.kiro/steering/base.md', '---\ninclusion: always\n---\n\n# Base\n\n常時適用の方針。\n');
-	// 複製（同一内容）。正本扱いは .agents / .github / .kiro の3か所が揃った場合のみ
+	// 同名スキルが他の配置場所にもある（同一内容）。正本／複製の区別は付けず、
+	// 配置場所ごとに独立したスキルとして扱う
 	write(root, '.github/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.github/skills/demo/references/guide.md', '# Guide\n\n方針は [base](../../../../.kiro/steering/base.md) に従う。\n');
 	write(root, '.github/skills/demo/references/unused.md', '# 未使用\n');
@@ -49,14 +50,12 @@ test('発見・グルーピング・スキル外・孤立が機能する', () =>
 	assert.equal(dirs.length, 3);
 
 	const units = dirs.map((d) => buildUnit(d));
-	const skills = groupSkills(units, ['.agents']);
-	assert.equal(skills.length, 1);
-	const skill = skills[0];
-	assert.equal(skill.canonicalExplicit, true);
-	assert.ok(skill.canonical.dir.includes('.agents'));
-	assert.equal(skill.copies.length, 2);
+	const skills = groupSkills(units);
+	assert.equal(skills.length, 3, '配置場所ごとに独立したスキルになる');
+	const skill = skills.find((s) => s.unit.dir.includes('.agents'));
+	assert.ok(skill);
 
-	const unit = skill.canonical;
+	const unit = skill.unit;
 	// スキル外（steering）に到達している
 	const boundaryPaths = [...unit.reachableBoundary];
 	assert.ok(boundaryPaths.some((p) => p.includes('.kiro')));
@@ -66,34 +65,38 @@ test('発見・グルーピング・スキル外・孤立が機能する', () =>
 	assert.equal(unit.orphans.length, 1);
 	assert.ok(unit.orphans[0].endsWith('unused.md'));
 
-	// 正常系では error が出ない / ドリフトなし
+	// 正常系では error が出ない
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	assert.ok(!warnings.some((w) => w.severity === 'error'), JSON.stringify(warnings));
-	assert.ok(!warnings.some((w) => w.ruleId === 'R11'));
 	// 孤立は info で出る
 	assert.ok(warnings.some((w) => w.ruleId === 'R9'));
 });
 
-test('複製ドリフトを検出する', () => {
+test('同名スキルは3か所揃っても独立で、内容の違いは警告しない・lint は全配置場所に効く', () => {
 	const root = tmpRoot();
 	write(root, '.agents/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.agents/skills/demo/references/guide.md', '# Guide\n');
 	write(root, '.github/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.github/skills/demo/references/guide.md', '# Guide 改変済み\n');
-	// 正本扱いの条件（3か所すべて）を満たすため .kiro にも同一内容を置く
+	write(root, '.github/skills/demo/references/unused.md', '# 未使用\n');
 	write(root, '.kiro/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.kiro/skills/demo/references/guide.md', '# Guide\n');
 
 	const units = findSkillDirs([root], []).map((d) => buildUnit(d));
-	const skill = groupSkills(units, ['.agents'])[0];
-	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
-	const drift = warnings.find((w) => w.ruleId === 'R11');
-	assert.ok(drift, 'R11 が出るはず');
-	assert.match(drift.message, /不一致 1件/);
+	const skills = groupSkills(units);
+	assert.equal(skills.length, 3, '3か所揃っても統合しない');
+	for (const skill of skills) {
+		const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
+		assert.ok(!warnings.some((w) => w.ruleId === 'R11'), '乖離の警告（廃止済み）は出ない');
+	}
+	// lint は正本だけでなく全配置場所に適用される（.github 側の孤立も出る）
+	const githubSkill = skills.find((s) => s.unit.dir.includes('.github'));
+	assert.ok(githubSkill);
+	const githubWarnings = evaluateSkill(githubSkill, DEFAULT_RULE_SETTINGS);
+	assert.ok(githubWarnings.some((w) => w.ruleId === 'R9' && w.file.endsWith('unused.md')), '.github 側のスキルにも lint が効く');
 });
 
-test('正本扱いは3か所揃った場合のみ: .agents + .github の2か所では独立で R11 は出ない', () => {
-	// Copilot のみ対応のスキルを模す（コピー運用はしていないのに内容が違う2か所）
+test('同名スキルは2か所でも独立（.agents + .github）', () => {
 	const root = tmpRoot();
 	write(root, '.agents/skills/demo/SKILL.md', GOOD_SKILL);
 	write(root, '.agents/skills/demo/references/guide.md', '# Guide\n');
@@ -102,29 +105,11 @@ test('正本扱いは3か所揃った場合のみ: .agents + .github の2か所�
 	write(root, '.github/skills/demo/references/extra.md', '# GitHub 側にだけある\n');
 
 	const units = findSkillDirs([root], []).map((d) => buildUnit(d));
-	const skills = groupSkills(units, ['.agents']);
+	const skills = groupSkills(units);
 	assert.equal(skills.length, 2, '各配置場所が独立したスキルになる');
-	assert.ok(skills.every((s) => s.copies.length === 0));
 	for (const skill of skills) {
 		const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
-		assert.ok(!warnings.some((w) => w.ruleId === 'R11'), 'R11 は出ない');
-	}
-});
-
-test('正本扱いは3か所揃った場合のみ: .github + .kiro（.agents なし）も独立', () => {
-	const root = tmpRoot();
-	write(root, '.github/skills/demo/SKILL.md', GOOD_SKILL);
-	write(root, '.github/skills/demo/references/guide.md', '# Guide\n');
-	write(root, '.kiro/skills/demo/SKILL.md', GOOD_SKILL);
-	write(root, '.kiro/skills/demo/references/guide.md', '# Guide 別の内容\n');
-
-	const units = findSkillDirs([root], []).map((d) => buildUnit(d));
-	const skills = groupSkills(units, ['.agents']);
-	assert.equal(skills.length, 2);
-	assert.ok(skills.every((s) => s.copies.length === 0));
-	for (const skill of skills) {
-		const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
-		assert.ok(!warnings.some((w) => w.ruleId === 'R11'), 'R11 は出ない');
+		assert.ok(!warnings.some((w) => w.ruleId === 'R11'), '乖離の警告（廃止済み）は出ない');
 	}
 });
 
@@ -147,7 +132,7 @@ ${body}
 	write(root, 'skills/bad/references/deep/deep2.md', '# D2\n');
 
 	const unit = buildUnit(path.join(root, 'skills/bad'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	const byRule = (id: string) => warnings.filter((w) => w.ruleId === id);
 	assert.ok(byRule('R1').length >= 2, 'name 形式とディレクトリ不一致');
@@ -175,11 +160,10 @@ test('マルチルート: 別フォルダの同名スキルは統合されず、
 		...dirsA.map((d) => buildUnit(d, rootA)),
 		...dirsB.map((d) => buildUnit(d, rootB)),
 	];
-	const skills = groupSkills(units, ['.agents']);
-	assert.equal(skills.length, 2, '同名でも別フォルダなら統合しない');
-	assert.ok(skills.every((s) => s.copies.length === 0), '他フォルダの同名スキルを複製扱いしない');
+	const skills = groupSkills(units);
+	assert.equal(skills.length, 2, '同名でも別フォルダなら別々のスキルになる');
 
-	const steering = discoverSteering([rootA, rootB], ['.agents']);
+	const steering = discoverSteering([rootA, rootB]);
 	const byRoot = new Map([
 		[rootA, listWorkspaceRelPaths([rootA])],
 		[rootB, listWorkspaceRelPaths([rootB])],
@@ -225,7 +209,7 @@ test('frontmatter の文字種・サイズ: ハイフン位置と compatibility 
 	);
 	const dirs = findSkillDirs([root], []);
 	const units = dirs.map((d) => buildUnit(d));
-	const skills = groupSkills(units, ['.agents']);
+	const skills = groupSkills(units);
 	const all: string[] = [];
 	const messages: string[] = [];
 	for (const skill of skills) {
@@ -251,7 +235,7 @@ description: ファイルを変換するツール。
 # Plain
 `);
 	const unit = buildUnit(path.join(root, 'skills/plain'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	assert.ok(warnings.some((w) => w.ruleId === 'R3'));
 	assert.ok(!warnings.some((w) => w.severity === 'error'));
@@ -279,7 +263,7 @@ description: 言及の段階化テスト用。テストを実行するときに�
 `,
 	);
 	const unit = buildUnit(path.join(root, 'skills/mentions'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	const byRule = (id: string) => warnings.filter((w) => w.ruleId === id);
 	assert.equal(byRule('R7').length, 3, 'リンク2件＋パス付きコードスパン1件が未解決の参照');
@@ -318,7 +302,7 @@ description: 地の文の言及テスト用。テストを実行するときに�
 	write(root, 'skills/prose/references/handbook.md', '# Handbook\n');
 	write(root, 'skills/prose/references/unused.md', '# Unused\n');
 	const unit = buildUnit(path.join(root, 'skills/prose'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	const byRule = (id: string) => warnings.filter((w) => w.ruleId === id);
 	// 地の文で言及された2件は R13（要確認）になり、R9 にはならない
@@ -353,7 +337,7 @@ description: 地の文の言及テスト用2。テストを実行するときに
 	);
 	write(root, 'skills/prose2/references/linked.md', '# Linked\n');
 	const unit = buildUnit(path.join(root, 'skills/prose2'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	assert.equal(warnings.filter((w) => w.ruleId === 'R13').length, 0, '実在しない名前と到達済みファイルは要確認にしない');
 	assert.equal(warnings.filter((w) => w.ruleId === 'R9').length, 0);
@@ -377,7 +361,7 @@ description: 地の文の言及テスト用3。テストを実行するときに
 	);
 	write(root, 'skills/prose3/references/guide.md', '# Guide\n');
 	const unit = buildUnit(path.join(root, 'skills/prose3'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	// draft+guide.md は実在しない別ファイルの名前であり、guide.md への言及ではない
 	assert.equal(unit.proseMentions.length, 0, '部分一致を言及にしない');
@@ -393,14 +377,29 @@ test('同名スキルの場所タグ: 複数場所にある同名スキルは配
 		write(root, `${loc}/skills/dup/SKILL.md`, '---\nname: dup\ndescription: 同名テスト用。テストを実行するときに使う。\n---\n\n# Dup\n');
 		return buildUnit(path.join(root, loc, 'skills/dup'));
 	};
-	const skills = groupSkills([mk('.agents'), mk('.kiro')], ['.agents']);
-	assert.equal(skills.length, 2, '3か所そろわないため独立したスキルとして並ぶ');
-	const byLoc = new Map(skills.map((s) => [skillLocationOf(s.canonical.dir), sameNameLocationTag(skills, s)]));
+	const skills = groupSkills([mk('.agents'), mk('.kiro')]);
+	assert.equal(skills.length, 2, '配置場所ごとに独立したスキルとして並ぶ');
+	const byLoc = new Map(skills.map((s) => [skillLocationOf(s.unit.dir), sameNameLocationTag(skills, s)]));
 	assert.equal(byLoc.get('.agents'), ' · .agents');
 	assert.equal(byLoc.get('.kiro'), ' · .kiro');
 	// 同名が1つだけならタグは付かない
-	const single = groupSkills([mk('.agents')], ['.agents']);
+	const single = groupSkills([mk('.agents')]);
 	assert.equal(sameNameLocationTag(single, single[0]), '');
+});
+
+test('同名スキルの場所タグ: .claude と標準外の配置場所でも見分けられる', () => {
+	const root = tmpRoot();
+	const mk = (loc: string) => {
+		write(root, `${loc}/skills/dup/SKILL.md`, '---\nname: dup\ndescription: 同名テスト用。テストを実行するときに使う。\n---\n\n# Dup\n');
+		return buildUnit(path.join(root, loc, 'skills/dup'), root);
+	};
+	const claude = groupSkills([mk('.claude')]);
+	assert.equal(skillLocationOf(claude[0].unit.dir), '.claude', '.claude も標準の配置場所として認識する');
+	// 標準外の配置場所は、ルートからの相対パスで見分ける
+	const mixed = groupSkills([mk('.claude'), mk('custom')]);
+	assert.equal(mixed.length, 2);
+	const tags = mixed.map((s) => sameNameLocationTag(mixed, s)).sort();
+	assert.deepEqual(tags, [' · .claude', ' · custom/skills/dup']);
 });
 
 test('抽出: 同じ行のリンクとコードスパンはリンクとして格上げされる', () => {
@@ -445,7 +444,7 @@ description: 突合テスト用。テストを実行するときに使う。
 `,
 	);
 	const unit = buildUnit(path.join(root, 'skills/mixed'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	const r7 = warnings.find((w) => w.ruleId === 'R7');
 	const r13 = warnings.find((w) => w.ruleId === 'R13');
@@ -504,7 +503,7 @@ description: 解決拡張のテスト用。テストを実行するときに使�
 	assert.ok(unique?.exists, '同名一意で unique-note.md に解決する');
 	assert.ok(unique.target.endsWith(path.join('assets', 'unique-note.md')));
 	// 解決できた参照は警告にならない
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	assert.equal(warnings.filter((w) => w.ruleId === 'R7' || w.ruleId === 'R13').length, 0);
 });
@@ -527,7 +526,7 @@ description: 曖昧な同名のテスト用。テストを実行するときに�
 	write(root, 'skills/ambig/a/dup.md', '# A\n');
 	write(root, 'skills/ambig/b/dup.md', '# B\n');
 	const unit = buildUnit(path.join(root, 'skills/ambig'));
-	const skill = groupSkills([unit], ['.agents'])[0];
+	const skill = groupSkills([unit])[0];
 	const warnings = evaluateSkill(skill, DEFAULT_RULE_SETTINGS);
 	assert.equal(warnings.filter((w) => w.ruleId === 'R13').length, 1, '曖昧な同名は要確認のまま');
 });
@@ -642,11 +641,10 @@ test('監査指摘4: 参照チェーンが数万段でも findCycles がスタ�
 		reachableBoundary: new Set(),
 		orphans: [],
 		proseMentions: [],
-		fileHashes: new Map(),
 		l1Tokens: 1,
 		steeringAlwaysTokens: 0,
 	};
-	const skill = { key: 'chain', name: 'chain', canonical: unit, copies: [], canonicalExplicit: false };
+	const skill = { key: 'chain', name: 'chain', unit };
 	// 旧実装は再帰 DFS のため、この深さでは RangeError で再構築全体が失敗した
 	const warnings = evaluateSkill(skill, { ...DEFAULT_RULE_SETTINGS, maxReferenceDepth: 0, orphanFiles: 'off', skillTotalTokenBudget: 0 });
 	assert.ok(warnings.some((w) => w.ruleId === 'R8'), '末尾から SKILL.md への循環が検出される');
@@ -778,36 +776,13 @@ test('監査指摘: 走査の総ファイル数上限で列挙が打ち切られ
 	assert.equal(listAllFiles(root).length, 6);
 });
 
-test('監査指摘: ハッシュ上限を超えるファイルは fileHashes から外れるが列挙には残る', () => {
+test('大きなファイルも列挙には残る（孤立ファイルとして数える）', () => {
 	const root = tmpRoot();
 	write(root, 'skills/big/SKILL.md', GOOD_SKILL);
-	// 上限超のファイルはスパースファイルで作り、実容量と読み込みを節約する
+	// 大きなファイルはスパースファイルで作り、実容量と読み込みを節約する
 	const big = path.join(root, 'skills/big/blob.bin');
 	fs.writeFileSync(big, '');
-	fs.truncateSync(big, MAX_HASH_FILE_BYTES + 1);
+	fs.truncateSync(big, 17 * 1024 * 1024);
 	const unit = buildUnit(path.join(root, 'skills/big'));
-	assert.ok(unit.fileHashes.has('SKILL.md'), '通常ファイルはハッシュ対象');
-	assert.ok(!unit.fileHashes.has('blob.bin'), 'サイズ上限超はハッシュ対象外');
 	assert.ok(unit.orphans.includes(big), '列挙（孤立ファイル）には残る');
-});
-
-test('監査指摘: ハッシュ総量上限で残りのファイルが対象外になる', () => {
-	const root = tmpRoot();
-	write(root, 'skills/many/SKILL.md', GOOD_SKILL);
-	const perFile = MAX_HASH_FILE_BYTES / 2;
-	const count = Math.floor(MAX_HASH_TOTAL_BYTES / perFile) + 2;
-	for (let i = 0; i < count; i++) {
-		const p = path.join(root, `skills/many/blob${i}.bin`);
-		fs.writeFileSync(p, '');
-		fs.truncateSync(p, perFile);
-	}
-	const unit = buildUnit(path.join(root, 'skills/many'));
-	// 全件はハッシュされず、ハッシュ済み総量は上限以内に収まる
-	assert.ok(unit.fileHashes.size < count + 1, '総量上限で打ち切られる');
-	let hashedBytes = 0;
-	for (const rel of unit.fileHashes.keys()) {
-		hashedBytes += fs.statSync(path.join(unit.dir, rel)).size;
-	}
-	assert.ok(hashedBytes <= MAX_HASH_TOTAL_BYTES, 'ハッシュ済み総量が上限以内');
-	assert.ok(hashedBytes > MAX_HASH_TOTAL_BYTES - MAX_HASH_FILE_BYTES, '上限付近までハッシュされる');
 });

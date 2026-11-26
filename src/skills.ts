@@ -69,8 +69,6 @@ export interface SkillUnit {
 	orphans: string[];
 	/** 地の文でファイル名が言及されているが、明示的な参照では辿れないファイルへの言及（言及元・行つき） */
 	proseMentions: Array<{ target: string; from: string; line: number }>;
-	/** スキル内の全ファイル（相対パス→ハッシュ）。ドリフト比較用 */
-	fileHashes: Map<string, string>;
 	/** L1（name + description）の推定トークン */
 	l1Tokens: number;
 	/** スキル外のうち .kiro/steering かつ inclusion: always の推定トークン合計 */
@@ -80,10 +78,8 @@ export interface SkillUnit {
 export interface LogicalSkill {
 	key: string;
 	name: string;
-	canonical: SkillUnit;
-	copies: SkillUnit[];
-	/** 正本が canonicalRoots の指定で選ばれたか */
-	canonicalExplicit: boolean;
+	/** 配置場所ごとのスキル本体。配置場所の間に正本／複製の区別は付けない */
+	unit: SkillUnit;
 }
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'out', '.vscode-test']);
@@ -94,7 +90,6 @@ const MAX_WALK_DEPTH = 10;
  * ワークスペースはクローンした第三者リポジトリでありうるため、内容は信頼できない
  * 入力として扱う。巨大ファイルを全量読みすると拡張ホストのメモリを圧迫するので、
  * 上限を超えるファイルはテキストとして扱わない（トークン 0・参照なし）。
- * ハッシュだけは分割読みで求めるため、ドリフト検出（R11）は従来どおり働く。
  */
 export const MAX_TEXT_FILE_BYTES = 1024 * 1024;
 
@@ -105,17 +100,6 @@ export const MAX_TEXT_FILE_BYTES = 1024 * 1024;
  * 列挙を打ち切る（打ち切られた分は発見・解析の対象にならない）。
  */
 export const MAX_TOTAL_FILES = 100_000;
-
-/**
- * ハッシュ対象にする1ファイルのサイズ上限（バイト）。スキル内に大きな
- * バイナリがあっても、ドリフト検出（R11）のためのハッシュ計算だけで拡張
- * ホストを長時間ブロックしないため。これを超えるファイルはハッシュを
- * 求めず R11 の対象から外すが、列挙・参照解析・表示は従来どおり行う。
- */
-export const MAX_HASH_FILE_BYTES = 16 * 1024 * 1024;
-
-/** 1スキルあたりのハッシュ対象バイト総量の上限。単一ファイルが上限未満でも、大量のファイルで総量が膨らむ場合に打ち切る */
-export const MAX_HASH_TOTAL_BYTES = 256 * 1024 * 1024;
 
 /** 参照抽出の対象にする1行の長さ上限（文字数）。これより長い行は切り詰めて抽出する */
 const MAX_EXTRACT_LINE_LENGTH = 100_000;
@@ -504,12 +488,12 @@ function contentOf(absPath: string, st: fs.Stats): ContentCacheEntry {
 		// 無限読みを避ける）。ハッシュなし（fileHash は undefined を返す）
 	} else if (st.size > MAX_TEXT_FILE_BYTES) {
 		// サイズ上限を超える通常ファイルは内容を読まず、ハッシュだけ分割読みで
-		// 求める（ドリフト検出は維持し、メモリには載せない）
+		// 求める（メモリには載せない）
 		const hash = sha1FileSync(absPath);
 		if (hash === undefined) {
 			// 通常ファイルなのにハッシュを求められなかった（一時的な読み取り
 			// 失敗など）。「ハッシュなし」をキャッシュしてしまうと、mtime と
-			// サイズが同じ間は再試行されず fileHashes から欠落し続けるため、
+			// サイズが同じ間は再試行されずハッシュなしのままになるため、
 			// このエントリはキャッシュに登録せずに返す（次回に再試行できる）
 			return entry;
 		}
@@ -643,28 +627,6 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 		}
 	}
 
-	// ハッシュは内容キャッシュ経由で取得する（未変更ファイルは再読み込みしない）。
-	// 単一ファイルサイズと総量に上限を設け、大きなバイナリを大量に含むスキルでも
-	// ハッシュ計算だけで同期処理が長時間ブロックされないようにする。上限を超える
-	// ファイルはハッシュ対象から外すだけで、列挙・参照解析・表示は従来どおり
-	let hashBytes = 0;
-	const fileHashes = new Map<string, string>();
-	for (const abs of diskAbs) {
-		let size: number;
-		try {
-			size = fs.statSync(abs).size;
-		} catch {
-			continue;
-		}
-		if (size > MAX_HASH_FILE_BYTES || hashBytes + size > MAX_HASH_TOTAL_BYTES) {
-			continue;
-		}
-		const hash = fileHash(abs);
-		if (hash !== undefined) {
-			hashBytes += size;
-			fileHashes.set(path.relative(skillDir, abs), hash);
-		}
-	}
 	const orphans = diskAbs
 		.filter((abs) => abs !== skillMdPath && !reachableOwned.has(abs))
 		.sort();
@@ -700,27 +662,15 @@ export function buildUnit(skillDir: string, sourceRoot = ''): SkillUnit {
 		reachableBoundary,
 		orphans,
 		proseMentions: proseMentions.filter((m) => !reachableOwned.has(m.target)),
-		fileHashes,
 		l1Tokens,
 		steeringAlwaysTokens,
 	};
 }
 
-function rootPriority(dir: string, canonicalRoots: string[]): number {
-	const normalized = dir.split(path.sep).join('/');
-	for (let i = 0; i < canonicalRoots.length; i++) {
-		const root = canonicalRoots[i].replace(/\/+$/, '');
-		if (normalized === root || normalized.includes('/' + root.replace(/^\.\//, '') + '/') || normalized.includes(root + '/')) {
-			return i;
-		}
-	}
-	return Number.MAX_SAFE_INTEGER;
-}
-
 /**
- * スキルの所属スコープ（グルーピング単位）を決める。
+ * スキルの所属スコープを決める。
  * ワークスペースフォルダ内にあるスキルは、そのフォルダ（最長一致）をスコープとする。
- * skillsRoots がフォルダ内のパス（例: .github/skills）を指していても、正本と複製を
+ * skillsRoots がフォルダ内のパス（例: .github/skills）を指していても、所属を
  * 分割しないよう、フォルダ外の探索ルートはフォルダに一致しない場合にだけ使う。
  */
 export function scopeRootFor(dir: string, workspaceRoots: string[], extraRoots: string[]): string {
@@ -764,12 +714,12 @@ export function rootLabels(roots: string[]): Map<string, string> {
 	return new Map(uniq.map((r) => [r, tail(r)]));
 }
 
-/** スキルの配置場所。.agents / .github / .kiro のいずれの配下にあるか */
-export type SkillLocation = '.agents' | '.github' | '.kiro';
+/** スキルの配置場所。.agents / .github / .kiro / .claude のいずれの配下にあるか */
+export type SkillLocation = '.agents' | '.github' | '.kiro' | '.claude';
 
 export function skillLocationOf(dir: string): SkillLocation | null {
 	const normalized = '/' + dir.split(path.sep).join('/').replace(/\/+$/, '') + '/';
-	for (const loc of ['.agents', '.github', '.kiro'] as const) {
+	for (const loc of ['.agents', '.github', '.kiro', '.claude'] as const) {
 		if (normalized.includes(`/${loc}/skills/`)) {
 			return loc;
 		}
@@ -778,66 +728,46 @@ export function skillLocationOf(dir: string): SkillLocation | null {
 }
 
 /**
+ * 配置場所の表示名。標準の配置場所はその名前（例: '.agents'）、それ以外の
+ * 場所（追加ルート等）はルートからの相対パスで示し、どの配置場所でも
+ * 同名スキルを見分けられるようにする。
+ */
+export function locationLabelOf(unit: SkillUnit): string {
+	const loc = skillLocationOf(unit.dir);
+	if (loc) {
+		return loc;
+	}
+	if (unit.sourceRoot) {
+		const rel = path.relative(unit.sourceRoot, unit.dir).split(path.sep).join('/');
+		if (rel && !rel.startsWith('..')) {
+			return rel;
+		}
+	}
+	return unit.dir;
+}
+
+/**
  * 同名スキルが複数あるとき、配置場所で見分けるためのタグ（例: ' · .kiro'）。
- * 同名が1つだけの場合と、配置場所が判定できない場合は空文字を返す
- * （フォルダ名タグ側の見分けに委ねる）。
+ * 同名が1つだけの場合は空文字を返す。
  */
 export function sameNameLocationTag(skills: LogicalSkill[], target: LogicalSkill): string {
 	if (skills.filter((s) => s.name === target.name).length <= 1) {
 		return '';
 	}
-	const loc = skillLocationOf(target.canonical.dir);
-	return loc ? ` · ${loc}` : '';
+	return ` · ${locationLabelOf(target.unit)}`;
 }
 
-export function groupSkills(units: SkillUnit[], canonicalRoots: string[]): LogicalSkill[] {
-	const groups = new Map<string, SkillUnit[]>();
-	for (const unit of units) {
-		// マルチルート対応: 正本/複製の関係は同一の探索ルート内でのみ成立させる。
-		// 別フォルダ（別リポジトリ）の同名スキルは統合しない。
-		const key = `${unit.sourceRoot}\n${unit.name}`;
-		const arr = groups.get(key) ?? [];
-		arr.push(unit);
-		groups.set(key, arr);
-	}
-	const result: LogicalSkill[] = [];
-	for (const [key, arr] of groups) {
-		// 正本扱いの発動条件（2026-11-07 決定）: 同一スキルが .agents / .github /
-		// .kiro の3か所すべてに存在する場合に限る。3つ揃わなければ正本/複製の
-		// 関係は作らず、各配置場所を独立したスキルとして扱う。グルーピング・
-		// 正本のみへの lint・R11 は、3つ揃った場合だけ働く。単一ターゲットのスキルに
-		// 「正本との乖離」といった前提の立たない警告を出さないため。
-		const locations = new Set(arr.map((u) => skillLocationOf(u.dir)));
-		const hasAllThree = locations.has('.agents') && locations.has('.github') && locations.has('.kiro');
-		if (arr.length > 1 && hasAllThree) {
-			const sorted = [...arr].sort((a, b) => {
-				const pa = rootPriority(a.dir, canonicalRoots);
-				const pb = rootPriority(b.dir, canonicalRoots);
-				if (pa !== pb) {
-					return pa - pb;
-				}
-				return a.dir.localeCompare(b.dir);
-			});
-			const canonical = sorted[0];
-			result.push({
-				key,
-				name: canonical.name,
-				canonical,
-				copies: sorted.slice(1),
-				canonicalExplicit: rootPriority(canonical.dir, canonicalRoots) !== Number.MAX_SAFE_INTEGER,
-			});
-		} else {
-			for (const unit of arr) {
-				result.push({
-					key: `${key}\n${unit.dir}`,
-					name: unit.name,
-					canonical: unit,
-					copies: [],
-					canonicalExplicit: false,
-				});
-			}
-		}
-	}
+/**
+ * 発見したスキルを論理スキルに並べる。配置場所（.agents / .github / .kiro 等）
+ * ごとに独立したスキルとして扱い、正本／複製の区別や統合はしない
+ * （2026-11-26 決定で正本扱いを廃止）。同名スキルは配置場所ごとに別々に並ぶ。
+ */
+export function groupSkills(units: SkillUnit[]): LogicalSkill[] {
+	const result: LogicalSkill[] = units.map((unit) => ({
+		key: `${unit.sourceRoot}\n${unit.name}\n${unit.dir}`,
+		name: unit.name,
+		unit,
+	}));
 	return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 

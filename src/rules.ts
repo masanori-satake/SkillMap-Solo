@@ -191,20 +191,6 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 			},
 		},
 	},
-	R11: {
-		id: 'R11',
-		title: { ja: '正本と複製の乖離（ドリフト）', en: 'Canonical vs replica drift' },
-		tip: {
-			principle: {
-				ja: '正本と複製の乖離は、「片方のツールでだけ精度が落ちる」事故の元です。',
-				en: 'Drift between the canonical source and its copies is how "quality dropped in one tool only" incidents happen.',
-			},
-			fix: {
-				ja: '複製を再実行して正本に揃えてください。複製側を直接編集しても、次の複製で上書きされます。',
-				en: 'Re-run the copy step to realign the replicas with the canonical source. Editing a copy directly is lost on the next copy.',
-			},
-		},
-	},
 	S1: {
 		id: 'S1',
 		title: { ja: 'Steering の inclusion 未指定', en: 'Steering inclusion not specified' },
@@ -260,20 +246,6 @@ const RULE_DEFS: Record<string, RuleDefStatic> = {
 			fix: {
 				ja: '欠けているファイルを作成してください。意図的に不要な段階を飛ばす場合は、その旨を残りのファイルに一言書いておくと読み手が迷いません。',
 				en: 'Create the missing file. If a stage is intentionally skipped, leave a one-line note in the remaining files so readers are not left guessing.',
-			},
-		},
-	},
-	S5: {
-		id: 'S5',
-		title: { ja: 'Steering の正本と複製の乖離', en: 'Steering canonical vs replica drift' },
-		tip: {
-			principle: {
-				ja: 'Steering も正本と複製がずれれば、Kiro 側だけ古い方針で動き続けます。',
-				en: 'If steering copies drift from the canonical source, Kiro keeps following the outdated policy.',
-			},
-			fix: {
-				ja: '複製を再実行して正本に揃えてください（R11 と同じ考え方です）。',
-				en: 'Re-run the copy step to realign with the canonical source (same idea as R11).',
 			},
 		},
 	},
@@ -364,8 +336,6 @@ export interface SkillWarning {
 	file: string;
 	/** 対象行（0始まり、任意） */
 	line?: number;
-	/** 複製に対する警告の場合、その複製ユニット */
-	copyDir?: string;
 	/** 参照系ルール（R7/R13）の場合、解決先の絶対パス。同じ行に複数の未解決参照が
 	 * あっても、ツリーのノードと警告を正しく対応付けるために使う */
 	target?: string;
@@ -382,32 +352,6 @@ export function totalOwnedTokens(unit: SkillUnit): number {
 		total += unit.files.get(p)?.tokens ?? 0;
 	}
 	return total;
-}
-
-export interface Drift {
-	missing: string[];
-	extra: string[];
-	differing: string[];
-}
-
-export function driftBetween(canonical: SkillUnit, copy: SkillUnit): Drift {
-	const missing: string[] = [];
-	const differing: string[] = [];
-	for (const [rel, hash] of canonical.fileHashes) {
-		const copyHash = copy.fileHashes.get(rel);
-		if (copyHash === undefined) {
-			missing.push(rel);
-		} else if (copyHash !== hash) {
-			differing.push(rel);
-		}
-	}
-	const extra: string[] = [];
-	for (const rel of copy.fileHashes.keys()) {
-		if (!canonical.fileHashes.has(rel)) {
-			extra.push(rel);
-		}
-	}
-	return { missing: missing.sort(), extra: extra.sort(), differing: differing.sort() };
 }
 
 function findCycles(unit: SkillUnit): Array<{ from: string; line: number; to: string }> {
@@ -454,7 +398,7 @@ function findCycles(unit: SkillUnit): Array<{ from: string; line: number; to: st
 
 export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): SkillWarning[] {
 	const warnings: SkillWarning[] = [];
-	const unit = skill.canonical;
+	const unit = skill.unit;
 	const fm = unit.frontmatter;
 	const push = (w: SkillWarning) => warnings.push(w);
 
@@ -578,36 +522,10 @@ export function evaluateSkill(skill: LogicalSkill, settings: RuleSettings): Skil
 		}
 	}
 
-	// R11: 複製ドリフト
-	for (const copy of skill.copies) {
-		const drift = driftBetween(unit, copy);
-		const total = drift.missing.length + drift.extra.length + drift.differing.length;
-		if (total > 0) {
-			const parts: string[] = [];
-			if (drift.missing.length > 0) {
-				parts.push(L(`不足 ${drift.missing.length}件`, `${drift.missing.length} missing`));
-			}
-			if (drift.differing.length > 0) {
-				parts.push(L(`不一致 ${drift.differing.length}件`, `${drift.differing.length} differing`));
-			}
-			if (drift.extra.length > 0) {
-				parts.push(L(`余分 ${drift.extra.length}件`, `${drift.extra.length} extra`));
-			}
-			push({
-				ruleId: 'R11',
-				severity: 'warn',
-				message: L(`正本との乖離があります（${parts.join(L('、', ', '))}）`, `Drift from the canonical source (${parts.join(', ')})`),
-				file: copy.skillMdPath,
-				copyDir: copy.dir,
-			});
-		}
-	}
-
 	return warnings;
 }
 
 import {
-	filesEqual,
 	patternMatchesAny,
 	type SpecUnit,
 	type SteeringUnit,
@@ -671,16 +589,6 @@ export function evaluateSteering(
 					line: 0,
 				});
 			}
-		}
-		// S5: 正本との乖離
-		if (unit.canonicalCounterpart && !filesEqual(unit.canonicalCounterpart, unit.filePath)) {
-			warnings.push({
-				ruleId: 'S5',
-				severity: 'warn',
-				message: L('正本（.agents 配下）と内容が乖離しています', 'Content differs from the canonical source (under .agents)'),
-				file: unit.filePath,
-				line: 0,
-			});
 		}
 	}
 	// S3: 常時ロード合計の予算
