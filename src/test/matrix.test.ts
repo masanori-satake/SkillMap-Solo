@@ -81,6 +81,12 @@ test('ロードマトリクス: 独立したスキルは配置場所と利用で
 	assert.doesNotMatch(agentsRow, /正本|直接は利用不可/);
 });
 
+test('ロードマトリクス: 標準外の配置場所は相対パスで示し、区切り文字はエスケープする', () => {
+	const custom = logicalSkill('dup', skillUnit('/ws', '/ws/custom|old/skills/dup'));
+	const md = renderLoadMatrix([custom], [], [], []);
+	assert.match(md, /\| dup \(custom\\\|old\/skills\/dup\) \|/, '相対パスの | はエスケープして表が崩れないようにする');
+});
+
 test('ロードマトリクス: スキルとファイルは別の表に分ける', () => {
 	const skill = logicalSkill('dup', skillUnit('/ws', '/ws/.kiro/skills/dup'));
 	const md = renderLoadMatrix([skill], [], [specUnit('/ws', 'alpha')], [copilotUnit('/ws', 100)]);

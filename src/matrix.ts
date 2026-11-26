@@ -56,8 +56,9 @@ export function renderLoadMatrix(
 		const loc = skillLocationOf(skill.unit.dir);
 		const copCell = loc === '.github' || loc === '.agents' ? available : unavailable;
 		const kiroCell = loc === '.kiro' ? available : unavailable;
-		// 標準の配置場所はその名前、それ以外は相対パスで示し、同名行を見分けられるようにする
-		const locSuffix = ` (${locationLabelOf(skill.unit)})`;
+		// 標準の配置場所はその名前、それ以外は相対パスで示し、同名行を見分けられるようにする。
+		// 相対パスには表の区切り文字が含まれうるため、名前と同じくエスケープする
+		const locSuffix = ` (${esc(locationLabelOf(skill.unit))})`;
 		skillRows.push(
 			`| ${esc(skill.name)}${locSuffix}${tagFor(skillLabels, skill.unit.sourceRoot)} | ${copCell} | ${kiroCell} | ≈${totalOwnedTokens(skill.unit).toLocaleString()} |`,
 		);
