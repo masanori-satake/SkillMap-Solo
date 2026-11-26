@@ -474,22 +474,24 @@ export function activate(context: vscode.ExtensionContext): void {
 				query.set('message', warningMessage);
 			}
 			const uri = vscode.Uri.from({ scheme: TIP_SCHEME, path: `/tips/${ruleId}.md`, query: query.toString() });
-			const doc = await vscode.workspace.openTextDocument(uri);
-			await vscode.window.showTextDocument(doc, { preview: true });
 			try {
 				await vscode.commands.executeCommand('markdown.showPreview', uri);
 			} catch {
-				// プレビューが使えない環境ではソース表示で代替
+				// プレビューが使えない環境ではソース表示で代替（ソースのタブは
+				// この場合だけ開く。通常時に先に開くと Markdown タブが残る）
+				const doc = await vscode.workspace.openTextDocument(uri);
+				await vscode.window.showTextDocument(doc, { preview: true });
 			}
 		}),
 		vscode.commands.registerCommand('skillmap.showLoadMatrix', async () => {
 			const uri = vscode.Uri.from({ scheme: MATRIX_SCHEME, path: '/load-matrix.md' });
-			const doc = await vscode.workspace.openTextDocument(uri);
-			await vscode.window.showTextDocument(doc, { preview: true });
 			try {
 				await vscode.commands.executeCommand('markdown.showPreview', uri);
 			} catch {
-				// プレビューが使えない環境ではソース表示で代替
+				// プレビューが使えない環境ではソース表示で代替（ソースのタブは
+				// この場合だけ開く。通常時に先に開くと Markdown タブが残る）
+				const doc = await vscode.workspace.openTextDocument(uri);
+				await vscode.window.showTextDocument(doc, { preview: true });
 			}
 		}),
 	);
