@@ -8,8 +8,8 @@ function skillUnit(root: string, dir: string): SkillUnit {
 	return { dir, sourceRoot: root, files: new Map(), reachableOwned: new Set() } as unknown as SkillUnit;
 }
 
-function logicalSkill(name: string, canonical: SkillUnit, copies: SkillUnit[] = []): LogicalSkill {
-	return { key: name, name, canonical, copies, canonicalExplicit: false };
+function logicalSkill(name: string, unit: SkillUnit): LogicalSkill {
+	return { key: name, name, unit };
 }
 
 function copilotUnit(root: string, tokens: number): CopilotUnit {
@@ -92,13 +92,14 @@ test('ロードマトリクス: スキルとファイルは別の表に分ける
 	assert.doesNotMatch(mdSkillOnly, /\| ファイル \|/);
 });
 
-test('ロードマトリクス: 複製を持つスキルは従来どおり正本行と複製行で表示する', () => {
-	const canonical = skillUnit('/ws', '/ws/.agents/skills/dup');
-	const copy = skillUnit('/ws', '/ws/.kiro/skills/dup');
-	const md = renderLoadMatrix([logicalSkill('dup', canonical, [copy])], [], [], []);
-	assert.match(md, /\| dup（複製: Kiro 用） \| 利用不可 \| 利用可能 \|/);
-	// 正本（.agents）は Copilot から直接利用できる。Kiro では複製側が使われる
-	assert.match(md, /\| dup（正本） \| 利用可能 \| 直接は利用不可（原本） \|/);
+test('ロードマトリクス: 同名スキルが複数場所にあっても場所ごとの独立行で表示する', () => {
+	const agents = logicalSkill('dup', skillUnit('/ws', '/ws/.agents/skills/dup'));
+	const kiro = logicalSkill('dup', skillUnit('/ws', '/ws/.kiro/skills/dup'));
+	const md = renderLoadMatrix([agents, kiro], [], [], []);
+	// 正本行・複製行は作らず、配置場所ごとの行になる
+	assert.match(md, /\| dup \(\.agents\) \| 利用可能 \| 利用不可 \|/);
+	assert.match(md, /\| dup \(\.kiro\) \| 利用不可 \| 利用可能 \|/);
+	assert.doesNotMatch(md, /正本|複製|原本/);
 });
 
 test('ロードマトリクス: 未解析の Steering は「常時」ではなく未解析と表示する', () => {

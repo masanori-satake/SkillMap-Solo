@@ -16,7 +16,6 @@ export type NodeKind =
 	| 'cycle'
 	| 'orphanGroup'
 	| 'orphan'
-	| 'copy'
 	| 'steering'
 	| 'spec'
 	| 'copilot';
@@ -248,15 +247,13 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				case 'section':
 					return `section:${n.sectionId ?? ''}`;
 				case 'skill':
-					return `skill:${n.unit?.dir ?? n.skill?.canonical.dir ?? ''}`;
+					return `skill:${n.unit?.dir ?? n.skill?.unit.dir ?? ''}`;
 				case 'steering':
 					return `steering:${n.steeringUnit?.filePath ?? n.filePath ?? ''}`;
 				case 'spec':
 					return `spec:${n.specUnit?.dir ?? ''}`;
 				case 'copilot':
 					return `copilot:${n.copilotUnit?.filePath ?? n.filePath ?? ''}`;
-				case 'copy':
-					return `copy:${n.unit?.dir ?? n.filePath ?? ''}`;
 				case 'orphanGroup':
 					return 'orphanGroup';
 				default:
@@ -397,29 +394,29 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 	private buildSkillRoot(skill: LogicalSkill): MapNode {
 		const root = new MapNode('skill');
 		root.skill = skill;
-		root.unit = skill.canonical;
+		root.unit = skill.unit;
 		const warnings = this.model.skillWarnings.get(skill.key) ?? [];
-		root.warnings = warnings.filter((w) => w.file === skill.canonical.skillMdPath && w.ruleId === 'R10');
+		root.warnings = warnings.filter((w) => w.file === skill.unit.skillMdPath && w.ruleId === 'R10');
 		const children: MapNode[] = [];
-		children.push(this.buildFileNode(skill, skill.canonical, skill.canonical.skillMdPath, root, []));
-		if (skill.canonical.orphans.length > 0) {
+		children.push(this.buildFileNode(skill, skill.unit, skill.unit.skillMdPath, root, []));
+		if (skill.unit.orphans.length > 0) {
 			const group = new MapNode('orphanGroup');
 			group.skill = skill;
-			group.unit = skill.canonical;
+			group.unit = skill.unit;
 			group.parent = root;
 			// 未参照ファイルも共有予算を消費する。予算を消費しない経路があると、
 			// 参照されていないファイルが大量にあるスキルで総ノード数の上限が
 			// 成立しない。予算到達後は残りを個別には作らず、省略を1ノードにまとめる
 			const orphanChildren: MapNode[] = [];
-			for (const orphanPath of skill.canonical.orphans) {
+			for (const orphanPath of skill.unit.orphans) {
 				if (this.nodeBudget <= 0) {
-					orphanChildren.push(this.makeOmittedNode(group, skill, skill.canonical));
+					orphanChildren.push(this.makeOmittedNode(group, skill, skill.unit));
 					break;
 				}
 				this.nodeBudget--;
 				const orphan = new MapNode('orphan');
 				orphan.skill = skill;
-				orphan.unit = skill.canonical;
+				orphan.unit = skill.unit;
 				orphan.filePath = orphanPath;
 				orphan.parent = group;
 				orphan.warnings = warnings.filter((w) => w.file === orphanPath);
@@ -427,15 +424,6 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			}
 			group.children = orphanChildren;
 			children.push(group);
-		}
-		for (const copy of skill.copies) {
-			const copyNode = new MapNode('copy');
-			copyNode.skill = skill;
-			copyNode.unit = copy;
-			copyNode.parent = root;
-			copyNode.warnings = warnings.filter((w) => w.copyDir === copy.dir);
-			copyNode.children = [this.buildFileNode(skill, copy, copy.skillMdPath, copyNode, [])];
-			children.push(copyNode);
 		}
 		root.children = children;
 		return root;
@@ -475,9 +463,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			node.parent = parent;
 			node.labelOverride = `${path.basename(filePath)} ${L('（表示上限）', '(display limit)')}`;
 			node.boundary = unit.files.get(filePath)?.boundary ?? false;
-			if (unit === skill.canonical) {
+			if (unit === skill.unit) {
 				const warnings = this.model.skillWarnings.get(skill.key) ?? [];
-				node.warnings = warnings.filter((w) => w.file === filePath && w.copyDir === undefined);
+				node.warnings = warnings.filter((w) => w.file === filePath);
 			}
 			node.children = [];
 			return node;
@@ -492,9 +480,9 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 		node.boundary = info?.boundary ?? false;
 		const refCounts = countReferences(unit);
 		node.shared = (refCounts.get(filePath) ?? 0) > 1 && filePath !== unit.skillMdPath;
-		if (unit === skill.canonical) {
+		if (unit === skill.unit) {
 			const warnings = this.model.skillWarnings.get(skill.key) ?? [];
-			node.warnings = warnings.filter((w) => w.file === filePath && w.copyDir === undefined);
+			node.warnings = warnings.filter((w) => w.file === filePath);
 		}
 		const chain = [...ancestorChain, filePath];
 		const children: MapNode[] = [];
@@ -527,7 +515,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					missing.parent = node;
 					missing.tentative = isTentativeMention(edge);
 					missing.mentionLines = edge.lines;
-					if (unit === skill.canonical) {
+					if (unit === skill.unit) {
 						const warnings = this.model.skillWarnings.get(skill.key) ?? [];
 						missing.warnings = warnings.filter((w) => (w.ruleId === 'R7' || w.ruleId === 'R13') && w.file === filePath && w.line === edge.line && w.target === edge.target);
 					}
@@ -541,7 +529,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 					cycle.unit = unit;
 					cycle.filePath = edge.target;
 					cycle.parent = node;
-					if (unit === skill.canonical) {
+					if (unit === skill.unit) {
 						const warnings = this.model.skillWarnings.get(skill.key) ?? [];
 						cycle.warnings = warnings.filter((w) => w.ruleId === 'R8' && w.file === filePath && w.line === edge.line);
 					}
@@ -668,10 +656,6 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				return node.skill?.name ?? '';
 			case 'orphanGroup':
 				return L('未参照ファイル', 'Unreferenced files');
-			case 'copy': {
-				const rel = copyRootLabel(node.unit?.dir ?? '');
-				return L(`複製（${rel}）`, `Replica (${rel})`);
-			}
 			case 'steering':
 				return path.basename(node.filePath ?? '');
 			case 'spec':
@@ -766,13 +750,11 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				return undefined;
 			}
 			case 'skill': {
-				const total = node.skill ? totalOwnedTokens(node.skill.canonical) : 0;
-				const tag = node.skill ? folderTag(node.skill.name, node.skill.canonical.sourceRoot, this.model.skills.map((s) => ({ name: s.name, root: s.canonical.sourceRoot }))) : '';
+				const total = node.skill ? totalOwnedTokens(node.skill.unit) : 0;
+				const tag = node.skill ? folderTag(node.skill.name, node.skill.unit.sourceRoot, this.model.skills.map((s) => ({ name: s.name, root: s.unit.sourceRoot }))) : '';
 				const locTag = node.skill ? sameNameLocationTag(this.model.skills, node.skill) : '';
 				return `${L('合計', 'Total')} ≈${total.toLocaleString()} tok${warn(this.badgeOf(node))}${locTag}${tag}`;
 			}
-			case 'copy':
-				return node.warnings.length > 0 ? L('正本と乖離', 'Drifted from canonical') + warn(badgeCount(node.warnings)) : L('正本と一致', 'Matches canonical');
 			case 'orphanGroup': {
 				// 件数は表示木の子数ではなく解析モデルから取る。表示木は総ノード数
 				// 上限で未参照ファイルを省略ノードに畳むため、子数だと省略の有無で
@@ -852,8 +834,6 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 				);
 			case 'skill':
 				return new vscode.ThemeIcon('library');
-			case 'copy':
-				return new vscode.ThemeIcon('files');
 			case 'steering':
 				return new vscode.ThemeIcon(
 					node.warnings.length > 0 ? 'warning' : 'file',
@@ -948,7 +928,7 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			return md;
 		}
 		if (node.kind === 'skill' && node.skill) {
-			const unit = node.skill.canonical;
+			const unit = node.skill.unit;
 			const total = totalOwnedTokens(unit);
 			md.appendMarkdown(`**${escapeMarkdownText(node.skill.name)}**\n\n`);
 			md.appendMarkdown(L(`- 合計（重複排除）: ≈${total.toLocaleString()} tok\n`, `- Total (de-duplicated): ≈${total.toLocaleString()} tok\n`));
@@ -957,17 +937,8 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			if (unit.steeringAlwaysTokens > 0) {
 				md.appendMarkdown(L(`- うち .kiro/steering の常時ロード分（inclusion: always）: ≈${unit.steeringAlwaysTokens.toLocaleString()} tok\n`, `- of which always-loaded .kiro/steering (inclusion: always): ≈${unit.steeringAlwaysTokens.toLocaleString()} tok\n`));
 			}
-			if (!node.skill.canonicalExplicit && node.skill.copies.length > 0) {
-				md.appendMarkdown(L('- 正本の自動判定: canonicalRoots に一致する配置が無いため、先頭の配置を代表としています\n', '- Canonical auto-detection: no location matches canonicalRoots, so the first location is treated as the representative.\n'));
-			}
 			// 警告一覧も表示木ではなくモデルから取る（表示上限の先の警告も含める）
-			this.appendWarnings(md, (this.aggregateWarnings(node) ?? node.allWarnings()).filter((w) => w.copyDir === undefined).slice(0, 10));
-			return md;
-		}
-		if (node.kind === 'copy') {
-			md.appendMarkdown(`**${L('複製', 'Replica')}**: ${escapeMarkdownText(node.unit?.dir ?? '')}\n\n`);
-			md.appendMarkdown(L('警告ルールは正本にのみ適用されます。複製にはドリフトチェック（R11）のみが適用されます。\n', 'Warning rules apply to the canonical source only. Replicas get the drift check (R11) only.\n'));
-			this.appendWarnings(md, node.warnings);
+			this.appendWarnings(md, (this.aggregateWarnings(node) ?? node.allWarnings()).slice(0, 10));
 			return md;
 		}
 		if (node.kind === 'steering' && node.steeringUnit) {
@@ -988,9 +959,6 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			}
 			md.appendMarkdown(L(`- 推定トークン: ≈${u.tokens.toLocaleString()} tok\n`, `- Estimated tokens: ≈${u.tokens.toLocaleString()} tok\n`));
 			md.appendMarkdown(L('- Kiro: 利用可能（inclusion に従って自動ロード）／ Copilot: 利用不可\n', '- Kiro: Available (auto-loaded per inclusion) / Copilot: Unavailable\n'));
-			if (u.canonicalCounterpart) {
-				md.appendMarkdown(`- ${L('正本', 'Canonical')}: ${escapeMarkdownText(u.canonicalCounterpart)}\n`);
-			}
 			this.appendWarnings(md, node.warnings);
 			return md;
 		}
@@ -1081,16 +1049,6 @@ export class SkillTreeProvider implements vscode.TreeDataProvider<MapNode> {
 			void RULES;
 		}
 	}
-}
-
-function copyRootLabel(dir: string): string {
-	const segments = dir.split(path.sep).join('/').split('/');
-	const known = segments.filter((s) => ['.agents', '.kiro', '.github', '.claude'].includes(s));
-	if (known.length > 0) {
-		return known[0];
-	}
-	const parts = dir.split(path.sep).filter(Boolean);
-	return parts.length >= 2 ? parts[parts.length - 2] : path.basename(dir);
 }
 
 // escapeMarkdownText は src/markdown.ts の共通実装を使う（ツールチップは

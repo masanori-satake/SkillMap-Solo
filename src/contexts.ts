@@ -5,12 +5,10 @@ import { estimateTokens } from './tokens.js';
 import {
 	buildFileGraph,
 	buildResolutionContext,
-	isRealPathInside,
 	listAllFiles,
 	listFilesRecursive,
 	MAX_TEXT_FILE_BYTES,
 	readFileInfo,
-	sha1FileSync,
 	type FileGraph,
 } from './skills.js';
 import { matchesAnyPattern } from './glob.js';
@@ -37,8 +35,6 @@ export interface SteeringUnit {
 	fileMatchPattern?: string;
 	tokens: number;
 	graph: FileGraph;
-	/** 正本（.agents 配下）の対応ファイルがあればそのパス */
-	canonicalCounterpart?: string;
 }
 
 export interface SpecUnit {
@@ -95,29 +91,10 @@ function readText(filePath: string): TextRead {
 	}
 }
 
-function sha1Of(filePath: string): string | undefined {
-	// 分割読み版（全量をメモリに載せない。通常ファイル以外は undefined）
-	return sha1FileSync(filePath);
-}
-
-export function filesEqual(a: string, b: string): boolean {
-	const ha = sha1Of(a);
-	const hb = sha1Of(b);
-	return ha !== undefined && hb !== undefined && ha === hb;
-}
-
-/**
- * .kiro/steering 配下の Steering ファイルを発見する。
- * canonicalTrusted が false（canonicalRoots がワークスペース設定由来）の
- * 場合は、正本の対応ファイルの実体パスがワークスペース内に収まるものだけを
- * 採用する。対応ファイル自体が外部ファイルへのシンボリックリンクだと、
- * 乖離チェック（S5）のハッシュ計算で外部ファイルを読むことになるため
- */
+/** .kiro/steering 配下の Steering ファイルを発見する */
 export function discoverSteering(
 	workspaceRoots: string[],
-	canonicalRoots: string[],
 	knownFiles?: Map<string, string[]>,
-	canonicalTrusted = true,
 ): SteeringUnit[] {
 	const units: SteeringUnit[] = [];
 	for (const root of workspaceRoots) {
@@ -139,19 +116,6 @@ export function discoverSteering(
 			const rawInclusion = (fm.values['inclusion'] ?? '').trim();
 			const inclusion: Inclusion =
 				rawInclusion === 'fileMatch' || rawInclusion === 'manual' ? rawInclusion : 'always';
-			// 正本の対応ファイル（<canonicalRoot>/steering/<basename>）を探す
-			let canonicalCounterpart: string | undefined;
-			for (const cr of canonicalRoots) {
-				const candidate = path.join(root, cr, 'steering', path.basename(filePath));
-				if (candidate === filePath || !fs.existsSync(candidate)) {
-					continue;
-				}
-				if (!canonicalTrusted && !isRealPathInside(root, candidate)) {
-					continue;
-				}
-				canonicalCounterpart = candidate;
-				break;
-			}
 			units.push({
 				kind: 'steering',
 				filePath,
@@ -164,7 +128,6 @@ export function discoverSteering(
 				fileMatchPattern: fm.values['fileMatchPattern']?.trim() || undefined,
 				tokens: estimateTokens(text),
 				graph: buildFileGraph(filePath, steeringDir, resCtx),
-				canonicalCounterpart,
 			});
 		}
 	}

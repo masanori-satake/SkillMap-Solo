@@ -1,6 +1,6 @@
 # SkillMap-Solo
 
-[![Version](https://img.shields.io/badge/version-v1.11.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v1.12.0-blue.svg)](package.json)
 [![Visual Studio Marketplace](https://vsmarketplacebadges.dev/version/masanori-satake.skillmap-solo.svg?label=Marketplace&color=blue)](https://marketplace.visualstudio.com/items?itemName=masanori-satake.skillmap-solo)
 [![Open VSX](https://img.shields.io/open-vsx/v/masanori-satake/skillmap-solo?label=Open%20VSX)](https://open-vsx.org/extension/masanori-satake/skillmap-solo)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/masanori-satake/SkillMap-Solo)](https://github.com/masanori-satake/SkillMap-Solo/releases)
@@ -18,7 +18,7 @@
 
 AI context files are scattered and related: a SKILL.md points to references, references point to steering docs, and each tool (Kiro, GitHub Copilot) loads a different subset. When nobody sees the whole picture, upkeep lapses and output quality quietly degrades. SkillMap makes the structure, the token cost, and the best-practice gaps visible — and every warning comes with a **Tip** that explains why it matters and how to fix it, so you learn while you practise.
 
-Current version: **v1.11.1**
+Current version: **v1.12.0**
 
 ---
 
@@ -50,13 +50,13 @@ Current version: **v1.11.1**
    - Selecting a node shows the **path total** from the SKILL.md root to that node in the status bar.
    - The skill root shows the whole-skill total, counting shared files only once.
 
-3. **Best-practice warnings with Tips (R1–R13 / S1–S6)**
-   - SKILL.md size budgets, description quality, reference depth, drift between a canonical skill and its copies, dead `fileMatchPattern`s, and more.
+3. **Best-practice warnings with Tips**
+   - SKILL.md size budgets, description quality, reference depth, dead `fileMatchPattern`s, and more.
    - Every warning links to a Tip: the principle in one sentence plus a concrete fix. Warnings also appear in the Problems panel.
 
-4. **Canonical / replica model**
-   - If a canonical source (`.agents/` by default) is copied to `.kiro/` and `.github/` for different tools, the copies are grouped under the canonical skill. Rules apply to the canonical only; copies get a drift check. This canonical treatment applies only when the same skill exists in all three locations (`.agents/`, `.github/` and `.kiro/`); otherwise each location's skill stands on its own and is evaluated independently.
-   - **Multi-root workspaces are supported**: grouping, drift checks, pattern matching, and the load simulation all work per workspace folder, so same-named skills in different repositories never interfere with each other. In a multi-root workspace, the view's title bar also offers a target-root picker that narrows both the display and the scan to a single repository (or back to all roots).
+4. **Every location stands on its own**
+   - Every discovered skill is treated as an independent skill at its own location: same-named skills in different locations (such as `.agents/`, `.github/` and `.kiro/`) are listed separately, told apart by their location, and the rules are evaluated for every one of them. There is no canonical/copy distinction.
+   - **Multi-root workspaces are supported**: pattern matching and the load simulation work per workspace folder, so same-named skills in different repositories never interfere with each other. In a multi-root workspace, the view's title bar also offers a target-root picker that narrows both the display and the scan to a single repository (or back to all roots).
 
 5. **Steering, Specs, and Copilot instructions side by side**
    - Steering files show inclusion badges (always / conditional / manual) and the always-loaded token total — tokens consumed in every Kiro session.
@@ -80,7 +80,7 @@ Current version: **v1.11.1**
 
 #### From a VSIX file
 
-1. Download `skillmap-solo-1.11.1.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
+1. Download `skillmap-solo-1.12.0.vsix` from [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases)
 2. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
 3. Run **Extensions: Install from VSIX...** and select the file
 
@@ -128,7 +128,6 @@ Updates are delivered through the marketplace automatically, or by installing a 
 
 | Setting | Default | Description |
 |---|---|---|
-| `skillmap.canonicalRoots` | `[".agents"]` | Directories treated as the canonical source (priority order) |
 | `skillmap.copyTreeStyle` | `"unicode"` | Tree-copy ruling style: `"unicode"` or `"ascii"` |
 | `skillmap.skillsRoots` | `[]` | Extra directories to scan for SKILL.md files |
 | `skillmap.rules.skillBodyMaxTokens` | `5000` | R5: SKILL.md estimated-token budget (0 disables) |
@@ -200,7 +199,7 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 AI コンテキストファイルは散在し、関係し合っています。SKILL.md が references を指し、references が Steering を指し、そしてツール（Kiro、GitHub Copilot）ごとに読み込む範囲が違います。全体像が見えないと保守が後回しになり、出力の精度は静かに落ちていきます。SkillMap は構造と読み込みコストとベストプラクティスからのズレを見える化し、すべての警告に「なぜ問題か＋直し方」の **Tips** を付けます。実践しながら理解できることが、この拡張機能の核です。
 
-現在のバージョン: **v1.11.1**
+現在のバージョン: **v1.12.0**
 
 ---
 
@@ -232,13 +231,13 @@ AI コンテキストファイルは散在し、関係し合っています。SK
    - ノード選択時は、SKILL.md からそのノードまでの**経路合計**をステータスバーに表示します。
    - スキルのルートには、共有ファイルを1回だけ数えたスキル全体の合計を表示します。
 
-3. **Tips 付きベストプラクティス警告（R1–R13 / S1–S6）**
-   - SKILL.md のサイズ予算、description の質、参照の深さ、正本と複製のドリフト、実ファイルに一致しない fileMatchPattern など。
+3. **Tips 付きベストプラクティス警告**
+   - SKILL.md のサイズ予算、description の質、参照の深さ、実ファイルに一致しない fileMatchPattern など。
    - すべての警告に Tips（原則1文＋具体的な直し方）へのリンクが付きます。警告は Problems パネルにも出ます。
 
-4. **正本／複製モデル**
-   - 正本（既定は `.agents/`）が `.kiro/` や `.github/` にツール別に複製されている構成では、複製を正本の下にグループ表示します。ルールは正本のみ、複製はドリフトチェックのみです。この正本扱いは、同一スキルが `.agents` / `.github` / `.kiro` の3か所すべてに存在する場合に限ります。揃わない場合は各配置場所のスキルを独立したものとして扱い、それぞれを個別に評価します。
-   - **マルチルートワークスペース対応**：グルーピング、ドリフトチェック、パターン判定、ロードシミュレーションはすべてフォルダ単位で動作し、別リポジトリの同名スキルが干渉し合うことはありません。マルチルートでは、ビューのタイトルバーのボタンから対象ルートを選んで、表示と走査を1つのリポジトリだけに絞ることもできます（全ルートへの切り替えも同ボタンから）。
+4. **配置場所ごとに独立したスキルとして扱う**
+   - 発見したスキルは、配置場所ごとに独立したスキルとして扱います。同名のスキルが複数の配置場所（`.agents/` / `.github/` / `.kiro/` など）にあっても、配置場所で見分けて別々に並び、ルールはすべてのスキルに評価します。正本／複製の区別は付けません。
+   - **マルチルートワークスペース対応**：パターン判定、ロードシミュレーションはすべてフォルダ単位で動作し、別リポジトリの同名スキルが干渉し合うことはありません。マルチルートでは、ビューのタイトルバーのボタンから対象ルートを選んで、表示と走査を1つのリポジトリだけに絞ることもできます（全ルートへの切り替えも同ボタンから）。
 
 5. **Steering / Specs / Copilot instructions を並べて表示**
    - Steering は inclusion バッジ（常時／条件／手動）と常時ロード合計（Kiro の全セッションで毎回消費されるトークン）を表示します。
@@ -262,7 +261,7 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 
 #### VSIX ファイルから
 
-1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.11.1.vsix` をダウンロードする
+1. [GitHub Releases](https://github.com/masanori-satake/SkillMap-Solo/releases) から `skillmap-solo-1.12.0.vsix` をダウンロードする
 2. コマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）を開く
 3. **Extensions: Install from VSIX...** を実行し、ファイルを選ぶ
 
@@ -310,7 +309,6 @@ AI コンテキストファイルは散在し、関係し合っています。SK
 
 | 設定 | 既定値 | 説明 |
 |---|---|---|
-| `skillmap.canonicalRoots` | `[".agents"]` | 正本とみなすディレクトリ（優先順） |
 | `skillmap.copyTreeStyle` | `"unicode"` | ツリーコピーの罫線スタイル: `"unicode"` または `"ascii"` |
 | `skillmap.skillsRoots` | `[]` | SKILL.md を探す追加ディレクトリ |
 | `skillmap.rules.skillBodyMaxTokens` | `5000` | R5: SKILL.md の推定トークン上限（0で無効） |

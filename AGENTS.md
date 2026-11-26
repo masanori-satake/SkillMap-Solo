@@ -39,7 +39,7 @@ pre-commit フックおよび CI にてバージョン更新チェックが実�
 ## 🏗️ プロジェクト構成
 
 - `src/extension.ts` — 拡張機能のエントリポイント（モデル構築、Problems 連携、ステータスバー、監視）
-- `src/skills.ts` — Skills の発見・グルーピング（正本/複製）・参照グラフ構築
+- `src/skills.ts` — Skills の発見・参照グラフ構築
 - `src/contexts.ts` — Steering / Specs / Copilot instructions の発見とロードシミュレーション
 - `src/glob.ts` — 簡易 glob マッチャ（`**` / `*` / `?` / ブレース展開）
 - `src/rules.ts` — 警告ルール（R1–R12 / S1–S6）と Tips データ

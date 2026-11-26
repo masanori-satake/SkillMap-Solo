@@ -76,16 +76,6 @@
           "description": "%config.betaSpecs%",
           "type": "boolean"
         },
-        "skillmap.canonicalRoots": {
-          "default": [
-            ".agents"
-          ],
-          "description": "%config.canonicalRoots%",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "skillmap.copyTreeStyle": {
           "type": "string",
           "enum": [
@@ -281,5 +271,5 @@
     "vscode:prepublish": "node esbuild.js --production",
     "watch": "node esbuild.js --watch"
   },
-  "version": "1.11.1"
+  "version": "1.12.0"
 }

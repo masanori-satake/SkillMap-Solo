@@ -44,14 +44,11 @@ class MatrixContentProvider implements vscode.TextDocumentContentProvider {
 }
 
 interface Settings {
-	canonicalRoots: string[];
 	skillsRoots: string[];
 	/** skillsRoots がユーザー設定（または既定）由来か。ワークスペース設定由来の
 	 * 場合は探索範囲をワークスペースフォルダ配下に制限する（指摘: リポジトリ同梱の
 	 * .vscode/settings.json で本人の想定外の場所を走査しないため） */
 	skillsRootsTrusted: boolean;
-	/** canonicalRoots がユーザー設定（または既定）由来か。同上 */
-	canonicalRootsTrusted: boolean;
 	rules: RuleSettings;
 	betaSpecs: boolean;
 	betaLoadSimulation: boolean;
@@ -108,13 +105,9 @@ function readSettings(): Settings {
 	// ワークスペース設定はクローンしたリポジトリに同梱されうるため、由来によって
 	// 探索ルートの扱いを変える（rebuild 側で範囲制限する）
 	const skillsInsp = cfg.inspect<string[]>('skillsRoots');
-	const canonicalInsp = cfg.inspect<string[]>('canonicalRoots');
 	return {
-		canonicalRoots: stringArraySetting(cfg.get<unknown>('canonicalRoots'), ['.agents']),
 		skillsRoots: stringArraySetting(cfg.get<unknown>('skillsRoots'), []),
 		skillsRootsTrusted: skillsInsp?.workspaceValue === undefined && skillsInsp?.workspaceFolderValue === undefined,
-		canonicalRootsTrusted:
-			canonicalInsp?.workspaceValue === undefined && canonicalInsp?.workspaceFolderValue === undefined,
 		rules,
 		betaSpecs: booleanSetting(cfg.get<unknown>('beta.specs'), true),
 		betaLoadSimulation: booleanSetting(cfg.get<unknown>('beta.loadSimulation'), true),
@@ -305,15 +298,10 @@ export function activate(context: vscode.ExtensionContext): void {
 				}
 			}
 		}
-		// canonicalRoots も同様に、ワークスペース設定由来なら相対かつフォルダ外へ
-		// 出ない指定だけを採用する（path.join で外を指す指定を排除）
-		const canonicalRoots = settings.canonicalRootsTrusted
-			? settings.canonicalRoots
-			: settings.canonicalRoots.filter((r) => !path.isAbsolute(r) && !r.split(/[\\/]/).includes('..'));
-		// Skills（グルーピングのスコープは scopeRootFor: フォルダ内はフォルダ単位に揃える）
+		// Skills（所属スコープは scopeRootFor: フォルダ内はフォルダ単位に揃える）
 		const dirs = findSkillDirs(scanRoots, extraRoots, knownFiles);
 		const units = dirs.map((d) => buildUnit(d, scopeRootFor(d, workspaceRoots, extraRoots)));
-		const skills = groupSkills(units, canonicalRoots);
+		const skills = groupSkills(units);
 		const skillWarnings = new Map<string, SkillWarning[]>();
 		const allWarnings: SkillWarning[] = [];
 		for (const skill of skills) {
@@ -322,7 +310,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			allWarnings.push(...w);
 		}
 		// Steering / Specs / Copilot
-		const steering = discoverSteering(scanRoots, canonicalRoots, knownFiles, settings.canonicalRootsTrusted);
+		const steering = discoverSteering(scanRoots, knownFiles);
 		// 相対パス一覧は fileMatch な Steering の死パターン判定（S2）でしか使わない。
 		// 必要なときだけ作る（全ファイル分の変換は走査と同程度に重いため）
 		const relPathsByRoot = steering.some((u) => u.inclusion === 'fileMatch')
@@ -508,7 +496,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	treeView.onDidChangeSelection((e) => {
 		const node = e.selection[0];
-		if (!node || !node.filePath || node.kind === 'section' || node.kind === 'skill' || node.kind === 'copy' || node.kind === 'orphanGroup' || node.kind === 'spec') {
+		if (!node || !node.filePath || node.kind === 'section' || node.kind === 'skill' || node.kind === 'orphanGroup' || node.kind === 'spec') {
 			statusBar.hide();
 			return;
 		}
@@ -545,7 +533,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				p.endsWith('AGENTS.md') ||
 				p.includes(`${path.sep}.kiro${path.sep}`) ||
 				p.includes(`${path.sep}.github${path.sep}`) ||
-				model.skills.some((s) => p.startsWith(s.canonical.dir) || s.copies.some((c) => p.startsWith(c.dir)));
+				model.skills.some((s) => p.startsWith(s.unit.dir));
 			if (relevant) {
 				scheduleRefresh();
 			}

@@ -7,7 +7,6 @@ import {
 	discoverCopilot,
 	discoverSpecs,
 	discoverSteering,
-	filesEqual,
 	listWorkspaceRelPaths,
 	simulateLoad,
 } from '../contexts.js';
@@ -38,17 +37,16 @@ function setupWorkspace(root: string): void {
 	write(root, 'src/App.tsx', 'export {};\n');
 }
 
-test('Steering 発見と inclusion 解析、S1/S2/S5 が機能する', () => {
+test('Steering 発見と inclusion 解析、S1/S2 が機能する', () => {
 	const root = tmpRoot();
 	setupWorkspace(root);
-	const steering = discoverSteering([root], ['.agents']);
+	const steering = discoverSteering([root]);
 	assert.equal(steering.length, 4);
 	const byName = new Map(steering.map((s) => [s.name, s]));
 	assert.equal(byName.get('base')?.inclusion, 'always');
 	assert.equal(byName.get('base')?.inclusionExplicit, false);
 	assert.equal(byName.get('react')?.inclusion, 'fileMatch');
 	assert.equal(byName.get('manual')?.inclusion, 'manual');
-	assert.ok(byName.get('base')?.canonicalCounterpart?.includes('.agents'));
 
 	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
 	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
@@ -56,7 +54,7 @@ test('Steering 発見と inclusion 解析、S1/S2/S5 が機能する', () => {
 	assert.equal(byRule('S1').length, 1, 'base.md の inclusion 未指定');
 	assert.equal(byRule('S2').length, 1, 'dead.md の死パターン');
 	assert.ok(byRule('S2')[0].file.endsWith('dead.md'));
-	assert.equal(byRule('S5').length, 1, 'base.md の正本乖離');
+	assert.equal(byRule('S5').length, 0, '正本との乖離チェック（廃止済み）は出ない');
 });
 
 test('Specs 発見と S4（design 欠け）が機能する', () => {
@@ -75,7 +73,7 @@ test('Copilot 発見とロードシミュレーションが機能する', () => 
 	setupWorkspace(root);
 	const copilot = discoverCopilot([root]);
 	assert.equal(copilot.length, 3);
-	const steering = discoverSteering([root], ['.agents']);
+	const steering = discoverSteering([root]);
 	const sim = simulateLoad('src/App.tsx', steering, copilot);
 	// Kiro: base(常時) + react(fileMatch一致)。Copilot: copilot-instructions + AGENTS + react instructions(applyTo一致)
 	assert.deepEqual(sim.kiro.map((x) => x.name).sort(), ['base.md', 'react.md']);
@@ -92,7 +90,7 @@ test('Kiro の予約 Steering (product/structure/tech) には S1 を出さない
 	write(root, '.kiro/steering/structure.md', '# Structure\n\n構成。\n');
 	write(root, '.kiro/steering/tech.md', '# Tech\n\n技術。\n');
 	write(root, '.kiro/steering/custom-notes.md', '# Notes\n\n独自メモ。\n');
-	const steering = discoverSteering([root], ['.agents']);
+	const steering = discoverSteering([root]);
 	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
 	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
 	const s1Files = warnings.filter((w) => w.ruleId === 'S1').map((w) => path.basename(w.file));
@@ -109,7 +107,7 @@ test('inclusion の綴り間違いに S6 が出る', () => {
 	const root = tmpRoot();
 	setupWorkspace(root);
 	write(root, '.kiro/steering/typo.md', '---\ninclusion: alwyas\n---\n\n# Typo\n');
-	const steering = discoverSteering([root], ['.agents']);
+	const steering = discoverSteering([root]);
 	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
 	const warnings = evaluateSteering(steering, rels, DEFAULT_RULE_SETTINGS);
 	const s6 = warnings.filter((w) => w.ruleId === 'S6');
@@ -125,26 +123,16 @@ test('監査指摘1: Steering の読み込みにもサイズ上限が効く', ()
 	setupWorkspace(root);
 	// 1MB 超の steering は内容を読まない（トークン 0、frontmatter も読めない）
 	write(root, '.kiro/steering/huge.md', '---\ninclusion: manual\n---\n\n' + 'あ'.repeat(600_000));
-	const steering = discoverSteering([root], ['.agents']);
+	const steering = discoverSteering([root]);
 	const huge = steering.find((s) => s.name === 'huge');
 	assert.ok(huge);
 	assert.equal(huge.tokens, 0);
 });
 
-test('監査指摘1: filesEqual は大きなファイルでも分割読みで比較できる', () => {
-	const root = tmpRoot();
-	const content = 'x'.repeat(1_500_000);
-	write(root, 'a.bin', content);
-	write(root, 'b.bin', content);
-	write(root, 'c.bin', content + 'y');
-	assert.equal(filesEqual(path.join(root, 'a.bin'), path.join(root, 'b.bin')), true);
-	assert.equal(filesEqual(path.join(root, 'a.bin'), path.join(root, 'c.bin')), false);
-});
-
 test('表示言語を英語に切り替えると警告メッセージも英語になる', () => {
 	const root = tmpRoot();
 	setupWorkspace(root);
-	const steering = discoverSteering([root], ['.agents']);
+	const steering = discoverSteering([root]);
 	const rels = new Map([[root, listWorkspaceRelPaths([root])]]);
 	setLanguage('en');
 	try {
@@ -163,7 +151,7 @@ test('レビュー指摘1: サイズ上限超の Steering は未解析として�
 	write(root, '.kiro/steering/normal.md', '# Normal\n\n通常の常時ロード。\n');
 	// frontmatter では inclusion: manual だが、サイズ上限超で内容を読めない
 	write(root, '.kiro/steering/huge.md', '---\ninclusion: manual\n---\n\n' + 'あ'.repeat(600_000));
-	const steering = discoverSteering([root], ['.agents']);
+	const steering = discoverSteering([root]);
 	const huge = steering.find((s) => s.name === 'huge');
 	assert.ok(huge, 'ユニット自体は保持される');
 	assert.equal(huge.tokens, 0);
@@ -177,7 +165,7 @@ test('レビュー指摘1: サイズ上限超の Steering は未解析として�
 	assert.equal(warnings.filter((w) => w.ruleId === 'S1' && w.file.endsWith('huge.md')).length, 0);
 	// 対照: 空ファイルは未解析ではなく、従来どおり「未指定＝常時」として扱われる
 	write(root, '.kiro/steering/empty.md', '');
-	const steering2 = discoverSteering([root], ['.agents']);
+	const steering2 = discoverSteering([root]);
 	const empty = steering2.find((s) => s.name === 'empty');
 	assert.equal(empty?.unparsed, undefined);
 	assert.equal(empty?.inclusion, 'always');
@@ -185,25 +173,3 @@ test('レビュー指摘1: サイズ上限超の Steering は未解析として�
 	assert.equal(warnings2.filter((w) => w.ruleId === 'S1' && w.file.endsWith('empty.md')).length, 1);
 });
 
-test('レビュー指摘3: ワークスペース設定由来では外部への末端リンクを正本として採用しない', () => {
-	const root = tmpRoot();
-	const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'skillmap-outside-'));
-	write(outside, 'secret.md', '# Outside\n');
-	write(root, '.kiro/steering/linked.md', '# Linked\n');
-	write(root, 'inside-target.md', '# Inside target\n');
-	const counterpart = path.join(root, '.agents', 'steering', 'linked.md');
-	fs.mkdirSync(path.dirname(counterpart), { recursive: true });
-	fs.symlinkSync(path.join(outside, 'secret.md'), counterpart);
-	// ワークスペース設定由来（信頼できない）: 実体がフォルダ外 → 採用しない
-	// （採用すると S5 のハッシュ比較で外部ファイルを読むことになる）
-	const untrusted = discoverSteering([root], ['.agents'], undefined, false);
-	assert.equal(untrusted.find((s) => s.name === 'linked')?.canonicalCounterpart, undefined);
-	// ユーザー設定由来（信頼できる）: 従来どおり採用する
-	const trusted = discoverSteering([root], ['.agents'], undefined, true);
-	assert.ok(trusted.find((s) => s.name === 'linked')?.canonicalCounterpart?.includes('.agents'));
-	// フォルダ内を指すリンクは、信頼できない場合でも採用する
-	fs.unlinkSync(counterpart);
-	fs.symlinkSync(path.join(root, 'inside-target.md'), counterpart);
-	const internal = discoverSteering([root], ['.agents'], undefined, false);
-	assert.ok(internal.find((s) => s.name === 'linked')?.canonicalCounterpart?.includes('.agents'));
-});
