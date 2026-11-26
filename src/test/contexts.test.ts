@@ -172,4 +172,3 @@ test('レビュー指摘1: サイズ上限超の Steering は未解析として�
 	const warnings2 = evaluateSteering(steering2, rels, DEFAULT_RULE_SETTINGS);
 	assert.equal(warnings2.filter((w) => w.ruleId === 'S1' && w.file.endsWith('empty.md')).length, 1);
 });
-
