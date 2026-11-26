@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import type { CopilotUnit, SpecUnit, SteeringUnit } from './contexts.js';
-import { rootLabels, skillLocationOf, type LogicalSkill } from './skills.js';
+import { locationLabelOf, rootLabels, skillLocationOf, type LogicalSkill } from './skills.js';
 import { totalOwnedTokens } from './rules.js';
 import { L } from './i18n.js';
 import { escapeMarkdownText } from './markdown.js';
@@ -56,7 +56,8 @@ export function renderLoadMatrix(
 		const loc = skillLocationOf(skill.unit.dir);
 		const copCell = loc === '.github' || loc === '.agents' ? available : unavailable;
 		const kiroCell = loc === '.kiro' ? available : unavailable;
-		const locSuffix = loc ? ` (${loc})` : '';
+		// 標準の配置場所はその名前、それ以外は相対パスで示し、同名行を見分けられるようにする
+		const locSuffix = ` (${locationLabelOf(skill.unit)})`;
 		skillRows.push(
 			`| ${esc(skill.name)}${locSuffix}${tagFor(skillLabels, skill.unit.sourceRoot)} | ${copCell} | ${kiroCell} | ≈${totalOwnedTokens(skill.unit).toLocaleString()} |`,
 		);

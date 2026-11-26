@@ -387,6 +387,21 @@ test('同名スキルの場所タグ: 複数場所にある同名スキルは配
 	assert.equal(sameNameLocationTag(single, single[0]), '');
 });
 
+test('同名スキルの場所タグ: .claude と標準外の配置場所でも見分けられる', () => {
+	const root = tmpRoot();
+	const mk = (loc: string) => {
+		write(root, `${loc}/skills/dup/SKILL.md`, '---\nname: dup\ndescription: 同名テスト用。テストを実行するときに使う。\n---\n\n# Dup\n');
+		return buildUnit(path.join(root, loc, 'skills/dup'), root);
+	};
+	const claude = groupSkills([mk('.claude')]);
+	assert.equal(skillLocationOf(claude[0].unit.dir), '.claude', '.claude も標準の配置場所として認識する');
+	// 標準外の配置場所は、ルートからの相対パスで見分ける
+	const mixed = groupSkills([mk('.claude'), mk('custom')]);
+	assert.equal(mixed.length, 2);
+	const tags = mixed.map((s) => sameNameLocationTag(mixed, s)).sort();
+	assert.deepEqual(tags, [' · .claude', ' · custom/skills/dup']);
+});
+
 test('抽出: 同じ行のリンクとコードスパンはリンクとして格上げされる', () => {
 	const root = tmpRoot();
 	const from = path.join(root, 'a.md');

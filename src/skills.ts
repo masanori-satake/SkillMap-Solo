@@ -714,12 +714,12 @@ export function rootLabels(roots: string[]): Map<string, string> {
 	return new Map(uniq.map((r) => [r, tail(r)]));
 }
 
-/** スキルの配置場所。.agents / .github / .kiro のいずれの配下にあるか */
-export type SkillLocation = '.agents' | '.github' | '.kiro';
+/** スキルの配置場所。.agents / .github / .kiro / .claude のいずれの配下にあるか */
+export type SkillLocation = '.agents' | '.github' | '.kiro' | '.claude';
 
 export function skillLocationOf(dir: string): SkillLocation | null {
 	const normalized = '/' + dir.split(path.sep).join('/').replace(/\/+$/, '') + '/';
-	for (const loc of ['.agents', '.github', '.kiro'] as const) {
+	for (const loc of ['.agents', '.github', '.kiro', '.claude'] as const) {
 		if (normalized.includes(`/${loc}/skills/`)) {
 			return loc;
 		}
@@ -728,16 +728,33 @@ export function skillLocationOf(dir: string): SkillLocation | null {
 }
 
 /**
+ * 配置場所の表示名。標準の配置場所はその名前（例: '.agents'）、それ以外の
+ * 場所（追加ルート等）はルートからの相対パスで示し、どの配置場所でも
+ * 同名スキルを見分けられるようにする。
+ */
+export function locationLabelOf(unit: SkillUnit): string {
+	const loc = skillLocationOf(unit.dir);
+	if (loc) {
+		return loc;
+	}
+	if (unit.sourceRoot) {
+		const rel = path.relative(unit.sourceRoot, unit.dir).split(path.sep).join('/');
+		if (rel && !rel.startsWith('..')) {
+			return rel;
+		}
+	}
+	return unit.dir;
+}
+
+/**
  * 同名スキルが複数あるとき、配置場所で見分けるためのタグ（例: ' · .kiro'）。
- * 同名が1つだけの場合と、配置場所が判定できない場合は空文字を返す
- * （フォルダ名タグ側の見分けに委ねる）。
+ * 同名が1つだけの場合は空文字を返す。
  */
 export function sameNameLocationTag(skills: LogicalSkill[], target: LogicalSkill): string {
 	if (skills.filter((s) => s.name === target.name).length <= 1) {
 		return '';
 	}
-	const loc = skillLocationOf(target.unit.dir);
-	return loc ? ` · ${loc}` : '';
+	return ` · ${locationLabelOf(target.unit)}`;
 }
 
 /**
